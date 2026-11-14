@@ -39,10 +39,23 @@ uv sync
 uv run python scripts/smoke.py
 uv run python scripts/train_bekko.py          # BEKKO_CASES=1000, epochs=2
 uv run python scripts/train_demo.py
+uv run python scripts/eval_s1mb.py            # baseline-adjusted Task Avg
 ```
 
 Environment knobs: `SYSTEMONE_EPOCHS`, `SYSTEMONE_BATCH`, `BEKKO_CASES`,
 `SYSTEMONE_CHECKPOINT_DIR` (defaults to `artifacts/`).
+
+## Tests
+
+```bash
+uv run pytest                     # fast suite, ~3 s
+uv run pytest -m slow             # dataset-backed, needs the HF cache
+```
+
+The fast suite covers encoding, the token cache, model invariants, scoring maths,
+and schema validation. The slow suite asserts on the real S1MB corpus shapes
+(151-option choices, 600-token instructions, 40k-token states) and is skipped when
+the HuggingFace cache is absent.
 
 ## Data
 
@@ -55,7 +68,9 @@ Loading is capped per subset (`BEKKO_CASES`) because a full pass is ~262k steps.
 
 ## Measured
 
-Raw accuracy on the S1MB test split, 1M parameters, 6-candidate cap:
+Raw accuracy on the S1MB test split, 1M parameters, 8-candidate cap. Raw accuracy
+is not the leaderboard metric — see `docs/10-metrics.md` and run
+`scripts/eval_s1mb.py` for the baseline-adjusted Task Avg.
 
 | Training data | Examples | `noul` | `choice` | `score` | overall |
 |---|---:|---:|---:|---:|---:|
@@ -65,8 +80,13 @@ Raw accuracy on the S1MB test split, 1M parameters, 6-candidate cap:
 | bekko corpus, 1000/subset | 284,877 | 0.698 | 0.308 | 0.526 | 0.534 |
 
 The first two rows trained on the benchmark's own test rows, so they are not
-comparable to published results. Scaling corpus volume past ~90k examples did
-not help: the 1M model is capacity-bound, not data-bound.
+comparable to published results.
+
+These numbers predate a bug fix: queries used to be truncated from the front,
+which deleted the entire candidate in ~45% of S1MB rows and collapsed 27% of
+`choice` groups to a single identical encoding. Any rerun with the current code
+will differ. Compare against the trivial baselines (`noul` 0.715, `choice` 0.254,
+`score` 0.501) before treating `overall` as skill.
 
 ## Artifacts
 

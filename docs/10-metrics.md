@@ -92,23 +92,46 @@ statement.
 
 ## What this project can and cannot report today
 
-`scripts/train_*.py` prints **raw accuracy per kind** plus ECE. Nothing in this
-repo yet computes the adjusted scores, which means:
+`scripts/train_*.py` prints **raw accuracy per kind** plus ECE, which is a
+debugging signal, not a leaderboard number. `scripts/eval_s1mb.py` computes the
+adjusted scores described above:
 
-- Our internal numbers (0.53, 0.55) are raw accuracy on a case-split.
-- Published numbers (Jev 59.59, bekko-400m 50.60, Laya 13.36) are Task Avg.
-- **They must not be compared directly.**
+```bash
+SYSTEMONE_EVAL_CHECKPOINT=bekko_tiny uv run python scripts/eval_s1mb.py
+```
 
-Producing a comparable number needs four things, all straightforward:
+It keeps the benchmark's own candidate sets and order
+(`max_candidates=None, shuffle_options=False`) and fails loudly rather than
+dropping a decision, so the number it prints is comparable to the published
+table. Output goes to `artifacts/<name>/s1mb_report.json`.
+
+All four steps are implemented:
 
 1. Load S1MB with `max_candidates=None, shuffle_options=False` so the benchmark's
    own candidate sets and order are used.
-2. Run the model, collect per-decision predicted distributions.
-3. Apply the three formulas above, grouped by `(subset, kind)`.
+2. Run the model, collect per-decision predicted distributions
+   (`scoring.probabilities_by_group`).
+3. Apply the three formulas above, grouped by `(subset, kind)`
+   (`scoring.build_report`).
 4. Emit per-benchmark table, task scores, and Task Avg.
 
-The `Example` dataclass already carries `benchmark`, `candidate_ids`, and
-`values`, which is exactly the metadata those formulas need — the loader was
-generalised for this, but the scoring script is not written yet.
+The `Example` dataclass carries `benchmark`, `candidate_ids`, and `values`, and
+`EncodedSet` now persists them, so the scoring code can group by benchmark
+without re-parsing the dataset.
+
+## Why raw accuracy flatters this benchmark
+
+Measured on the S1MB test split, the trivial policies already score:
+
+| kind | best trivial policy | accuracy |
+|---|---|---:|
+| `noul` | always answer false (71.5% of labels) | 0.715 |
+| `choice` | always pick position 0 | 0.254 |
+| `score` | always pick the modal level | 0.501 |
+
+A model reporting "0.534 overall" on a 47/33/20 mix is therefore reporting
+mostly the label marginals. The adjusted score subtracts that:
+the same checkpoint scores `noul` +0.14, `choice` +0.04, `score` −0.32, for a
+Task Avg around 6. Quote the adjusted number or say "raw accuracy" explicitly.
 
 Next: [Experiments →](11-experiments.md)

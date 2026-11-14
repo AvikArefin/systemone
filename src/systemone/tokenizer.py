@@ -16,6 +16,8 @@ class Tokenizer(Protocol):
 
 
 def truncate_head_tail(ids: list[int], limit: int) -> list[int]:
+    if limit <= 0:
+        return []
     if len(ids) <= limit:
         return ids
     head = limit * 3 // 4

@@ -78,6 +78,22 @@ def _normalise(weights: list[float]) -> tuple[float, ...] | None:
     return tuple(weight / total for weight in weights)
 
 
+def _criterion_definitions(decision: dict) -> str:
+    """Render the label definitions a noul question is judged against.
+
+    The dataset supplies a definition for each of `true` and `false`. Dropping
+    them leaves the model guessing what the label means, because the two differ
+    only in the definition text, not in the instruction.
+    """
+    parts = []
+    for criterion in decision.get("criteria") or []:
+        label = criterion.get("id")
+        description = _text(criterion.get("description_json") or "")
+        if label and description:
+            parts.append(f"{label}: {description}")
+    return "\n".join(parts)
+
+
 def parse_decision(
     state: str,
     decision: dict,
@@ -100,6 +116,9 @@ def parse_decision(
         if kind == "noul":
             if "true" not in ids:
                 return None
+            definitions = _criterion_definitions(decision)
+            if definitions:
+                instructions = f"{instructions}\n{definitions}"
             probability = probabilities[ids.index("true")]
             return Example(
                 state=state,
@@ -188,11 +207,13 @@ def load_typed_decisions(
     seed: int = 0,
     max_cases: int | None = None,
     shuffle_options: bool = True,
+    strict: bool = False,
 ) -> dict[str, list[Example]]:
     from datasets import load_dataset
 
     rng = random.Random(seed)
     grouped: dict[str, list[Example]] = {}
+    dropped: dict[str, int] = {}
     for config in configs:
         try:
             dataset = load_dataset(repo, config, split=split)
@@ -218,9 +239,17 @@ def load_typed_decisions(
                     benchmark=config,
                     shuffle=shuffle_options,
                 )
-                if example is not None:
-                    # namespace by config so case ids never merge across datasets
-                    grouped.setdefault(f"{config}/{row['case_id']}", []).append(example)
+                if example is None:
+                    dropped[decision["type"]] = dropped.get(decision["type"], 0) + 1
+                    continue
+                # namespace by config so case ids never merge across datasets
+                grouped.setdefault(f"{config}/{row['case_id']}", []).append(example)
+    if dropped:
+        total = sum(dropped.values())
+        message = f"dropped {total} decisions while parsing: {dropped}"
+        if strict:
+            raise ValueError(message)
+        print(f"warning: {message}")
     return grouped
 
 
@@ -228,9 +257,17 @@ def load_s1mb(
     configs: list[str],
     max_candidates: int | None = 8,
     seed: int = 0,
+    shuffle_options: bool = True,
+    strict: bool = False,
 ) -> dict[str, list[Example]]:
     return load_typed_decisions(
-        S1MB_REPO, configs, split="test", max_candidates=max_candidates, seed=seed
+        S1MB_REPO,
+        configs,
+        split="test",
+        max_candidates=max_candidates,
+        seed=seed,
+        shuffle_options=shuffle_options,
+        strict=strict,
     )
 
 

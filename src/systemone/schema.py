@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 
-MAX_CHOICES = 8
+MAX_CHOICES = 256
 MIN_CHOICES = 2
-MAX_LEVELS = 8
+MAX_LEVELS = 256
 MIN_LEVELS = 2
 
 
@@ -99,8 +99,24 @@ def make_choice(probabilities: dict[str, float]) -> ChoiceAnswer:
     )
 
 
-def make_score(probabilities: dict[int, float]) -> ScoreAnswer:
-    expected = sum(level * p for level, p in probabilities.items())
+def normalise_levels(values: list[float]) -> list[float]:
+    """Map an ordered scale onto [0, 1] so expected values are comparable."""
+    if not values:
+        return []
+    low, high = min(values), max(values)
+    if high <= low:
+        return [0.0] * len(values)
+    return [(value - low) / (high - low) for value in values]
+
+
+def make_score(
+    probabilities: dict[int, float], values: list[float] | None = None
+) -> ScoreAnswer:
+    weights = normalise_levels(values) if values is not None else None
+    expected = sum(
+        (weights[level] if weights is not None else level) * probability
+        for level, probability in probabilities.items()
+    )
     return ScoreAnswer(
         type="score",
         score=float(expected),

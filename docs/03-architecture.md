@@ -95,34 +95,33 @@ what you want when they are separate texts stitched together.
 **SwiGLU.** `down(silu(gate(h)) * up(h))` — two 128→352 projections, one passed
 through SiLU and used as a gate on the other, then 352→128.
 
-**RMSNorm.** `torch.nn.RMSNorm(128, eps=1e-6)`. Three per block (attention norm,
-FFN norm, plus the final one outside the stack).
+**RMSNorm.** `torch.nn.RMSNorm(128, eps=1e-6)`. Two per block (attention norm and
+FFN norm), plus one final norm outside the stack.
 
 ## Where the parameters go
 
-`ModelConfig.parameter_count()` computes it exactly:
+`ModelConfig.parameter_count()` **measures** the count by building the model on
+PyTorch's `meta` device, which materialises the full parameter graph without
+allocating storage. There is deliberately no hand-written formula: an earlier
+version had one, and it silently over-reported by 768 parameters by counting
+three norms per block instead of two. Measured, it cannot drift from the model.
 
-```python
-emb  = vocab_size * d_model
-attn = d_model * (n_heads + 2*n_kv_heads) * head_dim + d_model**2
-ffn  = 3 * d_model * ffn_hidden
-norm = 3 * d_model                        # two per block + final
-head = d_model                            # truth_head
-total = emb + n_layers * (attn + ffn + norm) + norm + head
-```
-
-For the deployed model:
+The per-component breakdown for the deployed model is still worth understanding:
 
 ```
-embedding   2048 × 128            =  262,144
-attention   128×128 + 128×128     =   32,768   per layer
-feed-forward 3 × 128 × 352        =  135,168   per layer
-norms       3 × 128               =      384   per layer
-                                 ─────────
-per layer                         =  168,320  × 4 = 673,280
-final norm + head                 =      256
-                                 ─────────
-total                             = 1,001,472   (~1.00M)
+embedding   2048 × 128                  =  262,144
+attention   (4+2·2)·32·128 + 128²       =   49,152   per layer
+  ├ q_proj  128 × (4 × 32)              =   16,384
+  ├ k_proj  128 × (2 × 32)              =    8,192
+  ├ v_proj  128 × (2 × 32)              =    8,192
+  └ o_proj  128 × 128                   =   16,384
+feed-forward 3 × 128 × 352              =  135,168   per layer
+norms       2 × 128                     =      256   per layer
+                                        ─────────
+per layer                               =  184,576   × 4 = 738,304
+final norm + head                       =      256
+                                        ─────────
+total                                   = 1,000,704  (~1.00M)
 ```
 
 Note that **26% of all parameters are the embedding table**. That is a real
@@ -130,7 +129,7 @@ trade-off: a bigger vocabulary shortens sequences but eats the parameter budget.
 See [Deployment](13-deployment.md).
 
 The default `ModelConfig` (`d_model=256, n_layers=6, n_heads=8, ffn_hidden=688,
-vocab=258`) is 4,225,024 parameters — the largest that still fits the memory
+vocab=258`) is 4,222,976 parameters — the largest that still fits the memory
 target after quantisation.
 
 ## Padding and pooling

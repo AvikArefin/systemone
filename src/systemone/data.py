@@ -105,25 +105,31 @@ class Batch:
 
 
 def rows_for(
-    example: Example, tokenizer: Tokenizer
+    example: Example, tokenizer: Tokenizer, max_query_tokens: int
 ) -> tuple[list[list[int]], float, str, tuple[float, ...] | None]:
     question = example.question
     if isinstance(question, Noul):
         return (
-            [noul_query(tokenizer, question)],
+            [noul_query(tokenizer, question, max_query_tokens)],
             1.0 if example.label else 0.0,
             "noul",
             example.distribution,
         )
     if isinstance(question, Choice):
         return (
-            [choice_query(tokenizer, question, option) for option in question.criteria],
+            [
+                choice_query(tokenizer, question, option, max_query_tokens)
+                for option in question.criteria
+            ],
             float(question.criteria.index(example.label)),
             "choice",
             example.distribution,
         )
     return (
-        [score_query(tokenizer, question, level) for level in question.criteria],
+        [
+            score_query(tokenizer, question, level, max_query_tokens)
+            for level in question.criteria
+        ],
         float(example.label),
         "score",
         example.distribution,
@@ -152,6 +158,9 @@ def _fingerprint(tokenizer: Tokenizer) -> str:
     return digest.hexdigest()[:16]
 
 
+CACHE_VERSION = 2
+
+
 @dataclass
 class EncodedSet:
     state_data: Tensor
@@ -167,6 +176,10 @@ class EncodedSet:
     max_state_tokens: int
     max_query_tokens: int
     fingerprint: str = ""
+    benchmarks: list[str | None] | None = None
+    candidate_ids: list[tuple[str, ...] | None] | None = None
+    values: list[tuple[float, ...] | None] | None = None
+    version: int = CACHE_VERSION
 
     def __len__(self) -> int:
         return self.targets.numel()
@@ -181,6 +194,9 @@ class EncodedSet:
         targets: list[float] = []
         kinds: list[str] = []
         distributions: list[tuple[float, ...] | None] = []
+        benchmarks: list[str | None] = []
+        candidate_ids: list[tuple[str, ...] | None] = []
+        values: list[tuple[float, ...] | None] = []
 
         for example in examples:
             state = truncate_head_tail(
@@ -188,16 +204,25 @@ class EncodedSet:
             )
             if not state:
                 raise ValueError("encoded state is empty")
-            rows, target, kind, distribution = rows_for(example, tokenizer)
-            rows = [row[: cfg.max_query_tokens] for row in rows]
+            rows, target, kind, distribution = rows_for(
+                example, tokenizer, cfg.max_query_tokens
+            )
             if any(not row for row in rows):
                 raise ValueError("encoded query is empty")
+            if kind != "noul" and any(tokenizer.sep_id not in row for row in rows):
+                raise ValueError(
+                    "candidate text was truncated away; a group whose rows all "
+                    "share one encoding cannot be answered"
+                )
             states.append(state)
             queries.extend(rows)
             row_counts.append(len(rows))
             targets.append(target)
             kinds.append(kind)
             distributions.append(distribution)
+            benchmarks.append(example.benchmark)
+            candidate_ids.append(example.candidate_ids)
+            values.append(example.values)
 
         state_data, state_offsets = _flatten(states)
         query_data, query_offsets = _flatten(queries)
@@ -218,11 +243,17 @@ class EncodedSet:
             max_state_tokens=cfg.max_state_tokens,
             max_query_tokens=cfg.max_query_tokens,
             fingerprint=_fingerprint(tokenizer),
+            benchmarks=benchmarks,
+            candidate_ids=candidate_ids,
+            values=values,
         )
 
     def compatible(self, tokenizer: Tokenizer, cfg: ModelConfig) -> bool:
+        # read from __dict__, not getattr: a cache pickled before `version`
+        # existed would otherwise inherit the class default and pass the check
         return (
-            self.vocab_size == tokenizer.vocab_size
+            self.__dict__.get("version", 0) == CACHE_VERSION
+            and self.vocab_size == tokenizer.vocab_size
             and self.pad_id == tokenizer.pad_id
             and self.max_state_tokens == cfg.max_state_tokens
             and self.max_query_tokens == cfg.max_query_tokens

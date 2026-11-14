@@ -22,7 +22,6 @@ def _pad(
     for row, seq in enumerate(sequences):
         if not seq:
             raise ValueError("empty query sequence")
-        seq = seq[:width]
         ids[row, : len(seq)] = torch.tensor(seq, dtype=torch.long, device=device)
         mask[row, : len(seq)] = True
     return ids, mask
@@ -44,19 +43,25 @@ def answer_request(
         raise ValueError("encoded state is empty")
 
     jobs: list[tuple[str, list[list[int]]]] = []
+    limit = cfg.max_query_tokens
     for name, question in request.questions.items():
         if isinstance(question, Noul):
-            jobs.append((name, [noul_query(tokenizer, question)]))
+            jobs.append((name, [noul_query(tokenizer, question, limit)]))
         elif isinstance(question, Choice):
-            queries = [choice_query(tokenizer, question, o) for o in question.criteria]
+            queries = [
+                choice_query(tokenizer, question, o, limit) for o in question.criteria
+            ]
             jobs.append((name, queries))
         else:
-            queries = [score_query(tokenizer, question, level) for level in question.criteria]
+            queries = [
+                score_query(tokenizer, question, level, limit)
+                for level in question.criteria
+            ]
             jobs.append((name, queries))
 
     flat = [(name, query) for name, queries in jobs for query in queries]
     queries = [query for _, query in flat]
-    width = min(max(len(query) for query in queries), cfg.max_query_tokens)
+    width = max(len(query) for query in queries)
     query_ids, query_mask = _pad(queries, width, tokenizer.pad_id, device)
     state_ids = torch.tensor([state] * len(queries), dtype=torch.long, device=device)
     state_mask = torch.ones_like(state_ids, dtype=torch.bool)

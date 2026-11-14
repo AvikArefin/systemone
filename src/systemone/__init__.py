@@ -7,6 +7,7 @@ from .inference import answer_request
 from .model import TinyJev
 from .paths import CHECKPOINT_DIR, checkpoint_path
 from .schema import Choice, Noul, Request, Score
+from .scoring import build_report, probabilities_by_group
 from .seeding import build_model, set_seed
 from .tokenizer import ByteTokenizer
 from .train import train
@@ -24,12 +25,14 @@ __all__ = [
     "TinyJev",
     "answer_request",
     "build_model",
+    "build_report",
     "checkpoint_path",
     "fit_temperatures",
     "load_checkpoint",
     "load_jevbench",
     "load_jsonl",
     "load_or_build",
+    "probabilities_by_group",
     "save_checkpoint",
     "set_seed",
     "split_by_case",

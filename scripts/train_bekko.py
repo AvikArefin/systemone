@@ -90,8 +90,10 @@ collected = collect_logits(model, test_data, device=device)
 print("train_acc", {k: round(v, 3) for k, v in accuracy_by_kind(train_collected).items()})
 print("test_acc", {k: round(v, 3) for k, v in accuracy_by_kind(collected).items()})
 print(f"accuracy={accuracy(collected):.3f}")
+# fit on train: fitting on the eval split would report calibration the model
+# was optimised for, which is leakage
+temperatures = fit_temperatures(train_collected)
 print(f"ece_before={expected_calibration_error(collected):.4f}")
-temperatures = fit_temperatures(collected)
 print("temperatures", {k: round(v, 3) for k, v in temperatures.items()})
 print(f"ece_after={expected_calibration_error(collected, temperatures):.4f}")
 

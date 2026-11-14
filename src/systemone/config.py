@@ -1,4 +1,7 @@
+import functools
 from dataclasses import dataclass
+
+import torch
 
 
 @dataclass(frozen=True)
@@ -29,14 +32,21 @@ class ModelConfig:
     def head_dim(self) -> int:
         return self.d_model // self.n_heads
 
+    @functools.cache
     def parameter_count(self) -> int:
-        emb = self.vocab_size * self.d_model
-        attn = self.d_model * (self.n_heads + 2 * self.n_kv_heads) * self.head_dim
-        attn += self.d_model * self.d_model
-        ffn = 3 * self.d_model * self.ffn_hidden
-        norms = 3 * self.d_model
-        head = self.d_model
-        return emb + self.n_layers * (attn + ffn + norms) + norms + head
+        """Exact parameter count, measured from the constructed module.
+
+        This builds the model on PyTorch's `meta` device, which materialises the
+        full parameter graph without allocating any storage, so the number is
+        whatever the layers actually contain instead of a hand-maintained formula
+        that can drift. (It did drift: the previous formula over-reported by 768
+        parameters by counting three norms per block instead of two.)
+        """
+        from .model import TinyJev
+
+        with torch.device("meta"):
+            model = TinyJev(self)
+        return sum(parameter.numel() for parameter in model.parameters())
 
     def kv_cache_bytes(self, seq_len: int) -> int:
         return 2 * self.n_layers * self.n_kv_heads * self.head_dim * seq_len

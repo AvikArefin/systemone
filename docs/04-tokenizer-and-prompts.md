@@ -33,16 +33,36 @@ with `character_coverage=1.0`, deletes the corpus, and returns the wrapper.
 
 Fixed IDs shared by both tokenizers:
 
-| ID | Meaning |
-|---|---|
-| 0 | `[PAD]` — added to equalise lengths, always masked and zero-vector |
-| 1 | `[SEP]` (`␟`, U+241F) — boundary between instructions and candidate |
-| 2+ | real content tokens |
+| ID | `ByteTokenizer` | `SentencePieceTokenizer` |
+|---|---|---|
+| 0 | `[PAD]` | `[PAD]` |
+| 1 | `[SEP]` (`␟`, U+241F) | `<unk>` |
+| 2 | — | `[SEP]` (`␟`, U+241F) |
+
+`sentencepiece` reserves `unk_id=1`, so the separator lands at ID 2 in a trained
+tokenizer. Always read `tokenizer.sep_id`; never hard-code 1.
 
 `␟` is declared as a `user_defined_symbol` so the trainer reserves it as an
 atomic piece instead of splitting it.
 
 ## How text is cut to size
+
+A row is `instructions + ␟ + candidate`, and the two halves do **not** share a
+budget equally. The candidate is the only part that differs between the rows of a
+group, so a row that loses its candidate cannot be answered. `prompt._split_budget`
+therefore protects a floor for the candidate and gives the rest to the
+instructions, which are identical across the group and cost only context:
+
+```python
+available   = limit - 1                    # one token for the separator
+cand_budget = min(len(candidate), max(1, available - MIN_INSTRUCTION_TOKENS))
+instr_budget = available - cand_budget
+```
+
+Both halves then use `truncate_head_tail`, which keeps 75% of the beginning and
+25% of the end. For a state that keeps both the framing ("Customer note: …") and
+the conclusion ("… asks us to delete the records"), which is usually where the
+decision signal lives:
 
 ```python
 def truncate_head_tail(ids, limit):
@@ -51,11 +71,12 @@ def truncate_head_tail(ids, limit):
     return ids[:head] + ids[-(limit - head):]
 ```
 
-Keep 75% of the beginning and 25% of the end. Compared with plain truncation this
-keeps both the framing ("Customer note: …") and the conclusion ("… asks us to
-delete the records"), which is usually where the decision signal lives.
-
 Limits: 192 tokens for a state, 48 for a query in the deployed config.
+
+`EncodedSet.build` raises if any `choice`/`score` row has no separator, because a
+group whose rows all collapsed to one encoding is unanswerable. Before this check
+existed, front-only truncation silently deleted the entire candidate in ~45% of
+S1MB rows.
 
 ## The prompt format
 
