@@ -41,7 +41,7 @@ def test_batches_cover_every_example_once_and_respect_the_row_cap(tokenizer, cfg
     assert counts == [1, 3, 3]
 
     batches = encoded.batches(max_rows=4)
-    assert [index for batch in batches for index in batch] == [0, 1, 2]
+    assert sorted(index for batch in batches for index in batch) == [0, 1, 2]
     for batch in batches:
         assert sum(counts[index] for index in batch) <= 4
 
@@ -54,11 +54,13 @@ def test_one_huge_example_forms_its_own_batch(tokenizer, cfg):
         label="option 3",
     )
     encoded = EncodedSet.build([wide, *(_examples() * 4)], tokenizer, cfg)
+    counts = encoded.row_counts()
     batches = encoded.batches(max_rows=8)
-    first = batches[0]
-    assert first == [0], "the oversized example gets a batch to itself"
-    assert encoded.row_counts()[0] == 12
-    assert all(sum(encoded.row_counts()[i] for i in batch) <= 8 for batch in batches[1:])
+    assert counts[0] == 12
+    assert [batch for batch in batches if 0 in batch] == [[0]], "over the cap, so alone"
+    for batch in batches:
+        if batch != [0]:
+            assert sum(counts[index] for index in batch) <= 8
 
 
 def test_offsets_are_monotonic_and_cover_the_flat_buffers(tokenizer, cfg):

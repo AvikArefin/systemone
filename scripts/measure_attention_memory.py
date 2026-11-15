@@ -25,7 +25,7 @@ QUERY = int(os.environ.get("SYSTEMONE_MEM_QUERY", "128"))
 HEADS = int(os.environ.get("SYSTEMONE_MEM_HEADS", "4"))
 HEAD_DIM = int(os.environ.get("SYSTEMONE_MEM_HEAD_DIM", "32"))
 REPS = int(os.environ.get("SYSTEMONE_MEM_REPS", "5"))
-STRATEGIES = ("full_bool", "is_causal", "key_pad", "split")
+STRATEGIES = ("full_bool", "is_causal", "key_pad", "split", "shared")
 
 
 def _sdpa(rows: int, strategy: str):
@@ -61,6 +61,15 @@ def _sdpa(rows: int, strategy: str):
         torch.arange(total, device="mps").unsqueeze(0)
         <= (state + torch.arange(QUERY, device="mps")).unsqueeze(1)
     )
+
+    if strategy == "shared":
+        # what the model does for a length-bucketed batch: no state padding, so
+        # the causal rule is one [1, 1, query, total] tensor for every row
+        shared = allowed.view(1, 1, QUERY, total)
+        return shared, lambda q, k, v: torch.nn.functional.scaled_dot_product_attention(
+            q[:, :, state:], k, v, attn_mask=shared, enable_gqa=True
+        )
+
     query_mask = (allowed.unsqueeze(0) & keep.unsqueeze(1)).unsqueeze(1)
 
     def call(q, k, v):

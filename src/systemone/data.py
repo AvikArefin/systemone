@@ -192,8 +192,8 @@ class EncodedSet:
 
         A batch holds examples, and an example expands into one row per
         candidate -- an S1MB choice can carry thousands. Bounding the example
-        count therefore bounds nothing; the attention mask grows with
-        rows * tokens^2, so rows is the number that has to be capped.
+        count therefore bounds nothing; rows are what the attention cost grows
+        with, so rows is the number that has to be capped.
         """
         counts = self.row_counts()
         out: list[list[int]] = []
@@ -321,8 +321,6 @@ class EncodedSet:
         group_ids = torch.repeat_interleave(
             torch.arange(len(states)), row_end - row_start
         )
-        state_ids = state_ids.index_select(0, group_ids)
-        state_mask = state_mask.index_select(0, group_ids)
 
         chosen = list(indices)
         return Batch(

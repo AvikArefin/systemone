@@ -43,7 +43,9 @@ def evaluate(
     with torch.no_grad():
         for chunk in dataset.batches(max_rows):
             batch = dataset.collate(chunk).to(device)
-            logits = model(batch.state_ids, batch.state_mask, batch.query_ids, batch.query_mask)
+            logits = model(
+                batch.state_ids, batch.state_mask, batch.query_ids, batch.query_mask, batch.group_ids
+            )
             total += batch_loss(logits, batch).item()
             count += 1
     return total / count if count else float("nan")
@@ -91,7 +93,9 @@ def train(
         rng.shuffle(order)
         for chunk in _chunks(dataset, order, max_rows):
             batch = dataset.collate(chunk).to(device)
-            logits = model(batch.state_ids, batch.state_mask, batch.query_ids, batch.query_mask)
+            logits = model(
+                batch.state_ids, batch.state_mask, batch.query_ids, batch.query_mask, batch.group_ids
+            )
             loss = batch_loss(logits, batch)
             optimiser.zero_grad(set_to_none=True)
             loss.backward()

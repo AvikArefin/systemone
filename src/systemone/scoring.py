@@ -216,12 +216,14 @@ def probabilities_by_group(
     device = device or next(model.parameters()).device
     temperatures = temperatures or {}
     model.to(device).eval()
-    out: list[list[float]] = []
+    # batches() visits examples out of dataset order (it groups by state length
+    # so batches need no padding), so results are placed by index, not appended.
+    out: list[list[float]] = [None] * len(dataset)  # type: ignore[list-item]
     with torch.no_grad():
         for chunk in dataset.batches(max_rows):
             batch = dataset.collate(chunk).to(device)
             logits = model(
-                batch.state_ids, batch.state_mask, batch.query_ids, batch.query_mask
+                batch.state_ids, batch.state_mask, batch.query_ids, batch.query_mask, batch.group_ids
             )
             for group in range(len(batch.kinds)):
                 kind = batch.kinds[group]
@@ -229,7 +231,7 @@ def probabilities_by_group(
                 values = logits[index] / temperatures.get(kind, 1.0)
                 if kind == "noul":
                     probability = torch.sigmoid(values[0]).item()
-                    out.append([1.0 - probability, probability])
+                    out[chunk[group]] = [1.0 - probability, probability]
                 else:
-                    out.append(torch.softmax(values, dim=0).tolist())
+                    out[chunk[group]] = torch.softmax(values, dim=0).tolist()
     return out

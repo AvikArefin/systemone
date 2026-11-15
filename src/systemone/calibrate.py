@@ -22,7 +22,9 @@ def collect_logits(
     with torch.no_grad():
         for chunk in dataset.batches(max_rows):
             batch = dataset.collate(chunk).to(device)
-            logits = model(batch.state_ids, batch.state_mask, batch.query_ids, batch.query_mask)
+            logits = model(
+                batch.state_ids, batch.state_mask, batch.query_ids, batch.query_mask, batch.group_ids
+            )
             for group in range(len(batch.kinds)):
                 index = (batch.group_ids == group).nonzero(as_tuple=True)[0]
                 collected[batch.kinds[group]].append(

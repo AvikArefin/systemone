@@ -63,10 +63,11 @@ def answer_request(
     queries = [query for _, query in flat]
     width = max(len(query) for query in queries)
     query_ids, query_mask = _pad(queries, width, tokenizer.pad_id, device)
-    state_ids = torch.tensor([state] * len(queries), dtype=torch.long, device=device)
+    state_ids = torch.tensor([state], dtype=torch.long, device=device)
     state_mask = torch.ones_like(state_ids, dtype=torch.bool)
+    group_ids = torch.zeros(len(queries), dtype=torch.long, device=device)
 
-    logits = model(state_ids, state_mask, query_ids, query_mask)
+    logits = model(state_ids, state_mask, query_ids, query_mask, group_ids)
 
     grouped: dict[str, list[float]] = {}
     for (name, _), logit in zip(flat, logits.tolist()):
