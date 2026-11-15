@@ -128,12 +128,26 @@ silently reuse the wrong cache.
 
 - **Empty sequences raise.** A state that tokenises to nothing, or a candidate
   that truncates to nothing, is a data bug, not something to pad.
-- **`max_candidates=8`**. Training subsamples large option sets to 8 (always
-  keeping the gold one) and shuffles order, so the model cannot memorise
-  position. Benchmark scoring must *not* do this — it needs the original
-  candidate set and order.
+- **A candidate must never be truncated away.** `EncodedSet.build` raises if a
+  `choice`/`score` row has no separator, because a group whose rows all collapse
+  to one encoding cannot be answered. This guard exists because front-only
+  truncation silently deleted the candidate from 44.8% of S1MB rows; see
+  [Tokenizer and prompts](04-tokenizer-and-prompts.md) for the budget rule.
+- **`max_candidates=8` is a training default, not a limit.** Training subsamples
+  large option sets to 8 (always keeping the gold one) and shuffles order, so the
+  model cannot memorise position. Benchmark scoring must *not* do this — it needs
+  the original candidate set and order, so `load_s1mb(..., max_candidates=None,
+  shuffle_options=False)`. The schema accepts up to 256 options, because S1MB has
+  choices with 151.
+- **Drops are reported.** `load_typed_decisions` counts any decision it cannot
+  parse and prints a warning; pass `strict=True` to raise instead. Silently
+  dropping 10.8% of the benchmark was how 9 subsets disappeared unnoticed.
 - **Order matters.** `kinds`, `targets`, and `distributions` are parallel to the
   example indices, which is why the scoring code can zip a separate metadata list
-  alongside the cache.
+  alongside the cache. `EncodedSet` also stores `benchmarks`, `candidate_ids`, and
+  `values` so scoring can group by benchmark without re-parsing the dataset.
+- **The cache is versioned.** `CACHE_VERSION` invalidates caches built by older
+  code. Without it, a cache containing deleted candidates would be silently
+  reused, because the fingerprint only covers the tokenizer.
 
 Next: [Training →](06-training.md)

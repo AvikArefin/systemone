@@ -23,7 +23,7 @@ All questions share one state and are answered in **one batched forward pass**.
 
 1. **Truncate the state** to `cfg.max_state_tokens` using head/tail truncation.
 2. **Expand every question into rows** — one per candidate, or one for `noul`.
-3. **Pad** all rows to `min(widest row, cfg.max_query_tokens)`.
+3. **Pad** all rows to the widest row (each row already built to its own budget).
 4. **Repeat the state** once per row.
 5. **Forward pass** → one logit per row.
 6. **Group and normalise** — softmax within each question, after dividing by that
@@ -36,9 +36,17 @@ Two details that are easy to get wrong:
   with 1, 3, and 4 candidates, that is 8 rows and 8 copies of the same state.
   Sharing the encoding further would need a persistent KV cache, which is not
   implemented (see [Deployment](13-deployment.md)).
-- Padding width is `min(max row length, 48)`. A candidate longer than the cap is
-  cut, which can remove the discriminating tail. This is a real accuracy cost on
-  long options.
+- Padding width is the widest row after each row has been built to its own budget.
+  `answer_request` calls the same `choice_query` / `score_query` helpers as
+  training, so a served request is encoded identically to a training example —
+  that equality is asserted in `tests/test_inference.py`, because serving and
+  training drifting apart is silent and expensive.
+
+A candidate is **never** dropped to make room for instructions: the row budget is
+split with a floor for each half (see
+[Tokenizer and prompts](04-tokenizer-and-prompts.md)). An earlier version
+truncated the whole row from the front, which deleted the candidate entirely on
+long instructions.
 
 ## From logits to answers
 

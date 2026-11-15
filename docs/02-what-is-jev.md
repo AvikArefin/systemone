@@ -76,6 +76,12 @@ That table is the honest context for anything we report. It is also why "beat
 Laya" is a low bar and "beat Jev" is a research programme — read
 [Metrics](10-metrics.md) before comparing any number of ours to it.
 
+**This project has no entry in that table, and it should not yet.** The current
+checkpoint measures at roughly zero adjusted skill, and the raw accuracy figures
+quoted elsewhere were mostly measuring the benchmark's label marginals. The
+encoding bug that caused most of that is fixed; a comparable number requires a
+retrain. See [Experiments](11-experiments.md).
+
 ## What "Jev-style" means architecturally
 
 Not a specific network. It is a **shape of computation**:

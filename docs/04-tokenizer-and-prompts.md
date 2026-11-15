@@ -119,10 +119,16 @@ alternative — one row holding instructions and all candidates — would requir
 mask to prevent candidates from seeing each other, and the head to pool each
 candidate separately.
 
-Repetition keeps the code simple and the batching uniform, and the 48-token query
-cap usually leaves room. The real cost is paid in the token cache
-([Data pipeline](05-data-pipeline.md)): query tokens are ~53% of everything
-stored.
+Repetition keeps the code simple and the batching uniform. An earlier version of
+this page claimed "the 48-token query cap usually leaves room" — that was false,
+and it was the assumption the truncation bug hid behind. Measured on S1MB:
+instructions run to p50 27, p90 599, max 617 tokens, while the budget is 48. Half
+the noul queries sit exactly at the cap, and 21.6% of candidate rows had **no room
+left for the candidate at all**. The cap does not usually leave room; it usually
+binds.
+
+The real cost is paid in the token cache ([Data pipeline](05-data-pipeline.md)):
+query tokens are ~53% of everything stored.
 
 ## What the model actually sees
 
@@ -130,9 +136,12 @@ For a `choice` row with the deployed config:
 
 ```
 positions 0..191   state tokens, truncated head/tail, padded to 192
-positions 192..234 instructions + ␟ + option text, padded to 43 in that batch
+positions 192..234 instructions ␟ option text, at most 48 tokens in total,
+                   split with a floor for each half, padded to the batch width
 ```
 
-Padding is per batch, not per dataset — a batch of short rows wastes less.
+The 48 tokens are shared between the instruction and the option, not given to the
+instruction first. Padding is per batch, not per dataset — a batch of short rows
+wastes less.
 
 Next: [Data pipeline →](05-data-pipeline.md)

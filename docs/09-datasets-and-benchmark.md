@@ -88,6 +88,27 @@ What we do now:
 4. Treat S1MB's six synthetic generalisation subsets as the honest signal, since
    they test instruction-following rather than family familiarity.
 
+## The state budget vs. the real corpus
+
+`max_state_tokens` is 192. Measured on the S1MB test split with the trained
+tokenizer:
+
+```
+states                          14,009
+truncated                        7,788   (55.6%)
+tokens p50 / p90 / p99        232 / 1,645 / 5,876
+longest state                 39,163 tokens
+tokens dropped by the 192 cap   7,249,815  (78.1% of all state tokens)
+```
+
+So over half the benchmark is cut, and 78% of all state tokens never reach the
+model. For document benchmarks (`qasper`, `contract_nli`, `followir_*`, the
+NanoBEIR subsets) the answer is often in the middle, which head/tail truncation
+does not keep. Bumping this budget is a cheap accuracy win that no run so far has
+tested — every headline number in [Experiments](11-experiments.md) was produced
+at 192. The cost is quadratic attention, so it is a real trade-off rather than a
+free fix, but it should be measured before "capacity" is blamed.
+
 ## Where the files live
 
 `datasets` caches outside the project:

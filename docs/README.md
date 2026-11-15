@@ -29,6 +29,25 @@ decision data rather than general web text.
 | 12 | [Code map](12-code-map.md) | Which file does what |
 | 13 | [Deployment](13-deployment.md) | Why 1M parameters, and what fits on a chip |
 
+## Status: read the experiments page with care
+
+Every measured number in these docs was produced before a bug fix that restored
+the candidate text to the model. The short version:
+
+- Rows were truncated front-only, so ~45% of S1MB candidate rows lost the option
+  being judged, and 27% of `choice` groups collapsed to a single encoding.
+- The reported "0.534 overall" is mostly the label marginals: always answering
+  false scores 0.715 on `noul`, and the modal `score` level scores 0.501.
+- On the baseline-adjusted metric the existing checkpoint is at roughly **zero**
+  adjusted skill, not 53.
+- The conclusion "the 1M model is capacity-bound" is **withdrawn**: it was drawn
+  from data that was corrupted at every scale tested.
+
+The encoding, the metric, and the loader are fixed; the test suite pins them. What
+is left is a retrain on clean rows, then a real Task Avg. See
+[Experiments](11-experiments.md) for the measurements and what they do and do not
+support.
+
 ## The 30-second mental model
 
 ```

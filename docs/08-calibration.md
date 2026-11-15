@@ -52,14 +52,22 @@ needs no retraining.
 ## How `T` is fitted
 
 ```python
-collected = collect_logits(model, test_data)     # logits + targets, per kind
-temperatures = fit_temperatures(collected)
+train_collected = collect_logits(model, train_data)   # logits + targets, per kind
+temperatures = fit_temperatures(train_collected)
+ece_after = expected_calibration_error(test_collected, temperatures)
 ```
 
-- Collect logits for the validation/test set, grouped by kind.
+- Collect logits for the **train** split, grouped by kind.
 - Search 40 values of `T` geometrically spaced from 0.25 to 10.0.
 - Pick the `T` minimising NLL (BCE for `noul`, cross-entropy otherwise).
 - Fit one `T` per kind, because the three heads behave differently.
+- Measure ECE on the held-out split, never on the one `T` was fitted to.
+
+Fitting on the evaluation split is leakage: it reports calibration the model was
+optimised for, and it is a one-parameter fit so the inflation is small but free.
+The training scripts previously did exactly that — `fit_temperatures(collected)`
+where `collected` came from `test_data`. They now pass `train_collected`, and
+`tests/test_regressions.py` asserts the scripts cannot regress.
 
 No gradient descent — a grid is enough for one parameter per kind, and it cannot
 diverge.
