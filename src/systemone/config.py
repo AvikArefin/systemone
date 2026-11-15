@@ -13,7 +13,7 @@ class ModelConfig:
     n_kv_heads: int = 2
     ffn_hidden: int = 688
     max_state_tokens: int = 192
-    max_query_tokens: int = 48
+    max_query_tokens: int = 64
     max_candidates: int = 8
     rope_base: float = 10000.0
     norm_eps: float = 1e-6

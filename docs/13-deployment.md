@@ -25,7 +25,7 @@ That number is the reason the capacity conversation in
 ## What else costs memory
 
 **Activations.** Per row, per layer: a hidden vector of `d_model` floats plus
-attention scratch. With `d_model=128` and a 192+48 token sequence this is tens of
+attention scratch. With `d_model=128` and a 192+64 token sequence this is tens of
 KB, not MB. Fine.
 
 **KV cache.** `ModelConfig.kv_cache_bytes(seq_len)` =

@@ -71,7 +71,20 @@ def truncate_head_tail(ids, limit):
     return ids[:head] + ids[-(limit - head):]
 ```
 
-Limits: 192 tokens for a state, 48 for a query in the deployed config.
+Limits: 192 tokens for a state, 64 for a query in the deployed config. The query
+limit was 48 until the encoding fix; measured on S1MB, 64 is the point where
+`choice` rows stop being cut at all:
+
+```
+budget   kind     instruction kept   candidate kept   fully preserved
+  48    choice        98.3%             99.9%             92.1%
+  64    choice       100.0%            100.0%            100.0%
+  48    noul          55.9%               —                0.0%
+  64    noul          70.3%               —               35.4%
+```
+
+`noul` stays lossy at any realistic budget, because its instruction carries a full
+policy definition. That is a known cost, not something 64 fixes.
 
 `EncodedSet.build` raises if any `choice`/`score` row has no separator, because a
 group whose rows all collapsed to one encoding is unanswerable. Before this check
@@ -136,11 +149,11 @@ For a `choice` row with the deployed config:
 
 ```
 positions 0..191   state tokens, truncated head/tail, padded to 192
-positions 192..234 instructions ␟ option text, at most 48 tokens in total,
+positions 192..255 instructions ␟ option text, at most 64 tokens in total,
                    split with a floor for each half, padded to the batch width
 ```
 
-The 48 tokens are shared between the instruction and the option, not given to the
+The 64 tokens are shared between the instruction and the option, not given to the
 instruction first. Padding is per batch, not per dataset — a batch of short rows
 wastes less.
 

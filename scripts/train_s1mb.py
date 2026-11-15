@@ -54,7 +54,7 @@ cfg = ModelConfig(
     n_kv_heads=2,
     ffn_hidden=352,
     max_state_tokens=192,
-    max_query_tokens=48,
+    max_query_tokens=64,
 )
 model = build_model(cfg, SEED)
 print(f"params={cfg.parameter_count():,} ({cfg.parameter_count() / 1e6:.2f}M)")
