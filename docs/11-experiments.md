@@ -123,7 +123,115 @@ wrong; it is now measured rather than computed. See
 differently. Now every script calls `set_seed(seed)` and `build_model(cfg, seed)`,
 and the seed is stored in `model.pt`.
 
-## Negative and surprising results that still stand
+## Raising the budget at inference makes it worse
+
+With the mask fixed it became safe to ask the original question: does the
+checkpoint score better when it can see more? Evaluated on the full S1MB test
+split (106 configs, 14,009 cases, 26,269 decisions), `scripts/measure_state_budget.py`:
+
+```
+state/query   noul  choice  score  Task Avg | on the 12,520 rows that 192 cut
+   192/64     2.71    0.40   0.00    1.04    |   3.44   0.81   0.04   1.43
+   192/128    2.34    0.21   0.00    0.85    |   3.13   0.46   0.04   1.21
+   768/64     1.30    0.12   0.00    0.47    |   1.65   0.28   0.08   0.67
+   768/128    2.09    0.11   0.00    0.73    |   2.61   0.27   0.08   0.99
+```
+
+**More context made every kind worse.** The right-hand block isolates rows whose
+state was actually being cut, so it is the fair comparison, and it drops from
+1.43 to 0.67.
+
+The reason is not capacity: the checkpoint was trained with `max_state_tokens=192`,
+so anything beyond 192 is two distribution shifts at once — positions the RoPE
+never saw, and a different head/tail cut of the same text. The 72.7% of state
+tokens that never reach the model are a *training* limitation, not an inference
+one. Bumping the budget is only worth doing together with a retrain at the new
+budget, and until then 192 is the right serving value.
+
+`192/64` reproduces the clean run's Task Avg of **1.04** exactly, which is also
+the end-to-end check that the attention rewrite changed no numbers.
+
+## The attention mask was the thing that crashed the machine
+
+Raising the state budget from 192 to 768 rebooted the machine. Twice. The kernel
+log names it:
+
+```
+panicString: SOCD report detected: (iBoot async abort)
+```
+
+That is the GPU driver aborting, not the OS killing a process. Two mistakes
+multiplied:
+
+1. **A batch was 16 examples, not 16 rows.** Each example expands into one row per
+   candidate, and an S1MB `choice` can carry thousands — the largest measured is
+   2,416. So "16 examples" was up to 2,416 rows.
+2. **The attention mask was a full grid** of shape `[rows, tokens, tokens]`, built
+   per forward. At 576 rows and 791 tokens that is 360 MB of booleans before the
+   kernel touches it.
+
+Memory per forward at the two configurations, measured with
+`scripts/measure_attention_memory.py` (attention call only, 4 heads, 32-dim):
+
+```
+rows   full grid mask   split mask   full grid   split
+  16            13 MB         2 MB       14 ms     7 ms
+  64            51 MB         7 MB       18 ms    15 ms
+ 128           103 MB        15 MB       35 ms    28 ms
+ 256           206 MB        30 MB       89 ms    52 ms
+```
+
+Two fixes, both kept:
+
+- **Batch by rows, not examples.** `EncodedSet.batches(max_rows)` groups examples
+  until the row count reaches the cap, so a single 2,416-candidate example forms
+  its own batch instead of dragging fifteen others into a 2,400-row grid.
+  `batch_size` is gone from `train`/`evaluate`/`collect_logits`/`probabilities_by_group`;
+  everything takes `max_rows` (default 256).
+- **No grid.** Each block now makes two attention calls: the state half uses a
+  per-key padding flag, the query half uses a causal rule that costs
+  `query_len × total` per row instead of `total²`. See
+  [Architecture](03-architecture.md#the-mask-is-not-a-grid).
+
+The rewrite is numerically identical: the reference logits from before the change
+reproduce exactly (`max_abs_diff=0.000e+00`), because the attention pattern is
+unchanged — only how the mask is expressed.
+
+## What is still on the table
+
+Two measured inefficiencies remain. Neither is a capacity problem; both are work
+we do twice or do on filler.
+
+**1.41× of attention work is padding.** Batching to the longest row in the batch
+means shorter rows are processed at that length. Measured on the S1MB test split
+with `max_rows=256`, padded tokens are 2.18M against 1.54M real.
+
+**2.5× of the state tower is redundant.** An example expands into one row per
+candidate, and every one of those rows carries the same state. Because the state
+cannot see the query (prefix-LM, [Architecture](03-architecture.md)), its hidden
+states and its K/V are *identical* across those rows — yet each is computed
+separately. Rows per case: p50 1, p99 28, and one case in the corpus has 2,416
+candidates.
+
+Two changes would take them, in this order:
+
+- **Shared prefix.** Compute the state tower once per case, then reuse its K/V
+  across that case's candidate rows. Exact, not an approximation, and it removes
+  the 2.5× (for the 2,416-candidate case, essentially all of it). This is the
+  same idea as KV caching — the account is "don't compute identical work twice",
+  just across candidates instead of across decode steps.
+- **Length bucketing.** Group rows by exact state length so no state padding
+  exists. That removes the 1.41× *and* the remaining mask: with no padding there
+  is nothing to exclude, so the query call can use `is_causal=True` (0 bytes
+  instead of 30 MB, 28 ms instead of 52 ms). The cost is more, smaller batches
+  when lengths are scattered — the long states all sit exactly at the 192 cap and
+  bucket perfectly, but short states fragment.
+
+Neither is done yet. Bucketing in particular needs a real measurement before it
+is trusted: fewer rows per batch means more kernel launches, and that can easily
+cost more than the padding it saves at these sequence lengths.
+
+
 
 **Calibration is not accuracy.** Soft labels plus temperature scaling improved
 ECE from 0.117 to 0.069 in a run where test accuracy actually *fell* (0.401),

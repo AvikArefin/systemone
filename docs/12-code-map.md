@@ -33,6 +33,9 @@ Every file, what it does, and where to look when you want to change something.
 | [`train_bekko.py`](../scripts/train_bekko.py) | Train on the bekko corpus, evaluate on S1MB test | 20 min – 2 h |
 | [`train_s1mb.py`](../scripts/train_s1mb.py) | Train on S1MB configs (contaminates the benchmark — comparison only) | ~40 min |
 | [`train_jevbench_bpe.py`](../scripts/train_jevbench_bpe.py) | Train on JevBench with a trained BPE tokenizer | ~20 min |
+| [`measure_budget.py`](../scripts/measure_budget.py) | Measure what each query budget preserves on S1MB, per decision kind | minutes |
+| [`measure_state_budget.py`](../scripts/measure_state_budget.py) | Score a checkpoint at several state/query budgets, whole split and on the rows the cap cut | 5 – 30 min |
+| [`measure_attention_memory.py`](../scripts/measure_attention_memory.py) | Mask tensor size and attention time per mask strategy | seconds |
 
 ## The data flow, end to end
 
@@ -64,6 +67,7 @@ logits [R]  ──►  batch_loss (per group)  ──►  backward
 | Make the model bigger/smaller | `config.py` | then `parameter_count()` tells you the cost |
 | Change head count or GQA ratio | `config.py` | `n_heads % n_kv_heads == 0` and even `head_dim` |
 | Change the token budget | `config.py` | `max_state_tokens`, `max_query_tokens` |
+| Change how many rows go in a batch | `data.py` | `EncodedSet.batches(max_rows)` — rows, never examples; a choice carries one row per candidate |
 | Change the prompt template | `prompt.py` | `_render` is the only place |
 | Change loss weighting | `data.py` | `batch_loss` — currently equal per group |
 | Change LR/schedule | `train.py` | `warmup_fraction`, `min_lr_ratio` |

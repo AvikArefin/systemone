@@ -69,8 +69,66 @@ query   s2 [  ✓   ✓   ✓   ·   ·  ]
 - Nothing in the state can see the query. That is what makes the state encoding
   independent of which question is being asked.
 
-Padding is removed by ANDing with `key_mask`, so padded positions can never be
-attended to.
+Padding is removed by `key_mask`, so padded positions can never be attended to.
+
+### The mask is not a grid
+
+The pattern above is described as a table, but it is never built as one. A
+`rows × tokens × tokens` boolean tensor is 206 MB at 256 rows and 896 tokens,
+and it is mostly the same value repeated; building it per forward is what
+crashed the machine twice (see
+[Experiments](11-experiments.md#the-attention-mask-was-the-thing-that-crashed-the-machine)).
+
+Instead each block makes **two attention calls**, one per query set:
+
+| call | queries | keys | mask |
+|---|---|---|---|
+| state | state | state | `[rows, 1, 1, s]` — one flag per key |
+| query | query | state + query | `[rows, 1, q, s+q]` — causal rule AND the same flag |
+
+The causal rule depends only on relative position, so the query mask costs
+`q × (s+q)` per row instead of `(s+q)²`. Neither call materialises a grid.
+
+`is_causal=True` alone cannot be used here: padding sits *inside* the prefix a
+query attends to, and SDPA does not accept `is_causal` and `attn_mask`
+together. The state half is bidirectional, so a causal flag would also be
+wrong for it. Splitting by query set is what buys the same saving without
+changing the attention pattern.
+
+Measured with `scripts/measure_attention_memory.py` at 256 rows, state 768,
+query 128 (one attention call):
+
+```
+strategy      mask tensor   attention
+full grid         206 MB        89 ms
+split (ours)       30 MB        52 ms
+is_causal           0 MB        28 ms   (no padding handling; not applicable)
+key-pad only        0 MB        57 ms   (no causality; not applicable)
+```
+
+### Why padding needs a mask, and causality does not
+
+A batch is a rectangle, so short rows get filled up to the longest row in the
+batch:
+
+```
+row 0: [ 40 real tokens ][30 PAD]
+row 1: [ 70 real tokens          ]
+row 2: [ 70 real tokens          ]
+```
+
+Attention is a weighted sum — nothing in the arithmetic knows the last 30 values
+are filler. They have to be excluded explicitly, and that exclusion is the
+padding mask. Causality is different: "token *i* may look at keys ≤ *i*" follows
+from position alone, so the kernel can derive it from a flag and never needs a
+tensor.
+
+So there are two ways to get rid of the mask: express the rule (a flag), or
+remove what the rule cannot express (the padding). Grouping rows by exact state
+length does the second — no PAD tokens exist, so there is nothing to exclude, and
+the query call becomes `is_causal=True` with a zero-byte mask. We do not do this
+yet: see [Experiments](11-experiments.md#what-is-still-on-the-table).
+
 
 ## Inside one block
 

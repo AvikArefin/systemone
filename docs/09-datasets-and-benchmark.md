@@ -90,24 +90,33 @@ What we do now:
 
 ## The state budget vs. the real corpus
 
-`max_state_tokens` is 192. Measured on the S1MB test split with the trained
-tokenizer:
+`max_state_tokens` is 192. Measured on the S1MB test split, one row per case,
+with the tokenizer the deployed checkpoint actually uses (`bekko_tiny`):
 
 ```
 states                          14,009
-truncated                        7,788   (55.6%)
-tokens p50 / p90 / p99        232 / 1,645 / 5,876
-longest state                 39,163 tokens
-tokens dropped by the 192 cap   7,249,815  (78.1% of all state tokens)
+truncated                        6,382   (45.6%)
+tokens p50 / p90 / p99        168 / 1,196 / 4,231
+longest state                   28,401 tokens
+tokens dropped by the 192 cap   4,893,744  (72.7% of all state tokens)
+tokens dropped by a 768 cap     1,217,712  (18.1% of all state tokens)
 ```
 
-So over half the benchmark is cut, and 78% of all state tokens never reach the
+Nearly half the benchmark is cut, and 72.7% of all state tokens never reach the
 model. For document benchmarks (`qasper`, `contract_nli`, `followir_*`, the
 NanoBEIR subsets) the answer is often in the middle, which head/tail truncation
-does not keep. Bumping this budget is a cheap accuracy win that no run so far has
-tested — every headline number in [Experiments](11-experiments.md) was produced
-at 192. The cost is quadratic attention, so it is a real trade-off rather than a
-free fix, but it should be measured before "capacity" is blamed.
+does not keep.
+
+**These counts depend on the tokenizer.** An earlier version of this table
+reported 7,788 truncated (55.6%) and a 39,163-token maximum; that was measured
+with the `s1mb_tiny` tokenizer, which is a different BPE vocabulary over the same
+text. Compare budgets within one tokenizer, never across.
+
+Bumping this budget is a cheap accuracy win that no run so far has tested — every
+headline number in [Experiments](11-experiments.md) was produced at 192. The cost
+is quadratic attention, so it is a real trade-off rather than a free fix, but it
+should be measured before "capacity" is blamed. A 768-token state still only
+leaves 18.1% of state tokens behind, versus 72.7% at 192.
 
 ## Where the files live
 

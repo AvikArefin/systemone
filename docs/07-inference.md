@@ -30,6 +30,11 @@ All questions share one state and are answered in **one batched forward pass**.
    kind's calibration temperature.
 7. **Build typed answers.**
 
+Batches are capped by **rows**, not by examples (`EncodedSet.batches(max_rows)`).
+One request can expand into thousands of rows, and the attention mask grows with
+rows × tokens², so the example count is not a useful limit. See
+[Architecture](03-architecture.md#the-mask-is-not-a-grid).
+
 Two details that are easy to get wrong:
 
 - The state is one buffer repeated for every row. If a request has 3 questions

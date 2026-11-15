@@ -25,8 +25,17 @@ That number is the reason the capacity conversation in
 ## What else costs memory
 
 **Activations.** Per row, per layer: a hidden vector of `d_model` floats plus
-attention scratch. With `d_model=128` and a 192+64 token sequence this is tens of
-KB, not MB. Fine.
+attention scratch. That is small for one request and *not* small for a batch,
+because rows multiply: at 576 rows and 791 tokens the hidden tensor alone is
+233 MB and the FFN activation 641 MB. This is why batching is capped by
+**rows** (`max_rows=256`), not by examples — one S1MB-style choice with thousands
+of candidates is thousands of rows by itself. See
+[Experiments](11-experiments.md#the-attention-mask-was-the-thing-that-crashed-the-machine).
+
+**Attention mask.** The mask is not a `rows × tokens × tokens` grid: the state
+half uses a per-key flag and the query half a `query_len × total` causal mask.
+At 256 rows and 896 tokens that is 30 MB instead of 206 MB. On a 16 GB machine the
+grid version is enough to take the GPU driver down.
 
 **KV cache.** `ModelConfig.kv_cache_bytes(seq_len)` =
 `2 × layers × kv_heads × head_dim × seq_len` elements. For the deployed config at

@@ -72,19 +72,52 @@ def truncate_head_tail(ids, limit):
 ```
 
 Limits: 192 tokens for a state, 64 for a query in the deployed config. The query
-limit was 48 until the encoding fix; measured on S1MB, 64 is the point where
-`choice` rows stop being cut at all:
+limit was 48 until the encoding fix. Measured on the full S1MB test split
+(14,009 cases, 26,269 decisions, every candidate kept, `scripts/measure_budget.py`):
 
 ```
-budget   kind     instruction kept   candidate kept   fully preserved
-  48    choice        98.3%             99.9%             92.1%
-  64    choice       100.0%            100.0%            100.0%
-  48    noul          55.9%               —                0.0%
-  64    noul          70.3%               —               35.4%
+budget  kind      rows       cut  instruction kept  candidate kept  whole rows
+  64  choice  119,497      1.8%             99.3%           99.8%       98.2%
+  96  choice  119,497      1.0%             99.8%          100.0%       99.0%
+ 128  choice  119,497      0.2%            100.0%          100.0%       99.8%
+ 192  choice  119,497      0.0%            100.0%          100.0%      100.0%
+  64  score    25,190     88.8%             25.4%          100.0%       11.2%
+  96  score    25,190     87.8%             36.0%          100.0%       12.2%
+ 128  score    25,190     87.6%             46.1%          100.0%       12.4%
+ 192  score    25,190     87.2%             66.1%          100.0%       12.8%
+  64  noul     12,357     61.4%             61.5%               —       38.6%
+  96  noul     12,357     49.1%             69.3%               —       50.9%
+ 128  noul     12,357     46.0%             75.0%               —       54.0%
+ 192  noul     12,357     42.0%             84.4%               —       58.0%
+ 384  all  —                    0.0%            100.0%          100.0%      100.0%
 ```
 
-`noul` stays lossy at any realistic budget, because its instruction carries a full
-policy definition. That is a known cost, not something 64 fixes.
+**The smallest budget that keeps every row whole is 384.** At 128, `choice` is
+effectively solved (99.8%) but `score` is not: its instruction is a ~250-token
+rubric, so 128 keeps 46% of it and only 12.4% of rows survive whole. `noul` sits
+at 54%. If the goal is "99% or better for every kind", 384 is the number; 128 is
+the number for `choice` alone. Row lengths: `choice` p50 28 / p90 44 / p99 91,
+`score` p50 297 / p90 312 / p99 324, `score` max 324.
+
+This table is a *coverage* measurement, not a recommendation for the current
+checkpoint. Scoring the same rows at a larger budget makes the model worse, not
+better, because it was trained at 192/64 — see
+[Experiments](11-experiments.md#raising-the-budget-at-inference-makes-it-worse).
+
+Two corrections to what this page said before. First, 64 is **not** the point
+where `choice` stops being cut: 1.8% of rows are still over budget at 64 and
+100% survive only at 192. An earlier table claiming 100% was not reproducible and
+is superseded by the numbers above.
+
+Second, `score` was missing from that table and it is the worst kind. Most score
+rows come from the relevance subsets (NanoBEIR, nanocoir), whose instruction is a
+~250-token rubric; at 64 it keeps 25.4% of the instruction and only 11.2% of rows
+survive whole. The handful of score subsets with short instructions (10-58 tokens)
+are unaffected, but they are a minority of the rows. `noul` is next, because its
+instruction carries a full policy definition. Neither is fixed by 64 — `score` is
+still only 26.2% intact at 256 — so both are known costs, not something this
+budget addresses. The 384 row is the first budget that does fix them.
+
 
 `EncodedSet.build` raises if any `choice`/`score` row has no separator, because a
 group whose rows all collapsed to one encoding is unanswerable. Before this check
@@ -135,10 +168,10 @@ candidate separately.
 Repetition keeps the code simple and the batching uniform. An earlier version of
 this page claimed "the 48-token query cap usually leaves room" — that was false,
 and it was the assumption the truncation bug hid behind. Measured on S1MB:
-instructions run to p50 27, p90 599, max 617 tokens, while the budget is 48. Half
-the noul queries sit exactly at the cap, and 21.6% of candidate rows had **no room
-left for the candidate at all**. The cap does not usually leave room; it usually
-binds.
+instructions run to p50 27, p90 599, max 617 tokens, while the budget was 48. Half
+the noul queries sat exactly at that cap, and 21.6% of candidate rows had **no room
+left for the candidate at all** before the split gave the candidate priority. The
+cap does not usually leave room; it usually binds.
 
 The real cost is paid in the token cache ([Data pipeline](05-data-pipeline.md)):
 query tokens are ~53% of everything stored.
