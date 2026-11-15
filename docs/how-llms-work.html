@@ -1,0 +1,1118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How an LLM works — single-head transformer block</title>
+<style>
+  :root{
+    --ink:#1d232b; --ink2:#46505e; --muted:#6f7a88; --faint:#8d97a4;
+    --line:#dfe3e8; --line2:#e9ecf0; --bg:#f1f3f5; --panel:#ffffff;
+    --blue:#2f6fed; --blue-b:#cadbf8; --blue-f:#f3f7fe;
+    --purple:#7c4dff; --purple-b:#ded4fb; --purple-f:#f7f4ff;
+    --orange:#dd8a34; --orange-b:#f2ddc2; --orange-f:#fdf8f1;
+    --green:#1f9d55; --green-b:#c9e6d5; --green-f:#f3faf6;
+    --teal:#0e9594; --teal-b:#c6e5e4; --teal-f:#f1fafa;
+    --rose:#d64550; --rose-b:#f2d0d3; --rose-f:#fdf4f5;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+    font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:none;margin:0;padding:0 40px}
+
+  /* ---------- masthead ---------- */
+  .mast{padding-block:28px 16px}
+  h1{font-size:clamp(24px,2.7vw,34px);line-height:1.12;letter-spacing:-.02em;margin:0 0 14px;font-weight:700}
+  .meta-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+  .meta{
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;color:var(--ink2);
+    background:#fff;border:1px solid var(--line);border-radius:5px;padding:3px 8px;
+  }
+  .meta b{color:var(--ink);font-weight:600}
+  .legend{display:flex;flex-wrap:wrap;gap:12px;font-size:10px;color:var(--muted);margin-bottom:4px}
+  .legend span{display:inline-flex;align-items:center;gap:5px}
+  .legend i{width:9px;height:9px;border-radius:2px;display:inline-block}
+  .seq-bar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px}
+  .chip{
+    display:inline-flex;align-items:center;font-family:ui-monospace,Menlo,monospace;font-size:12px;
+    padding:3px 8px;border-radius:5px;border:1px solid var(--line);background:#fff;color:var(--ink2);
+  }
+  .chip.gen{border-color:var(--green-b);background:var(--green-f);color:#177342;font-weight:600}
+  .chip.q{border-style:dashed;color:var(--faint);background:#fbfcfd}
+  .arrow{color:#aab3bd;font-family:ui-monospace,monospace;font-size:12px}
+
+  /* ---------- toolbar ---------- */
+  .toolbar{
+    position:fixed;top:0;left:0;right:0;z-index:50;background:rgba(255,255,255,.94);
+    backdrop-filter:blur(10px);border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+    padding:9px 0;margin-bottom:20px;
+  }
+  .tb-inner{display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px;max-width:1520px}
+  .tb-group{display:flex;flex-direction:column;gap:3px}
+  .tb-group.grow{flex:1 1 260px;min-width:200px}
+  .tb-group label{
+    font-size:11px;letter-spacing:0;color:var(--faint);font-weight:600;
+    display:flex;justify-content:space-between;gap:10px;
+  }
+  .tb-group label output{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--blue);letter-spacing:0}
+  input[type=text]{
+    width:100%;padding:6px 9px;border:1px solid var(--line);border-radius:5px;background:#fff;
+    color:var(--ink);font-family:ui-monospace,Menlo,monospace;font-size:12px;outline:none;
+  }
+  input[type=text]:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(47,111,237,.1)}
+  input[type=range]{width:100%;min-width:96px;-webkit-appearance:none;appearance:none;height:3px;border-radius:99px;background:#dfe3e8;outline:none;margin:7px 0 5px}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:var(--blue);border:2px solid #fff;box-shadow:0 0 0 1px var(--blue);cursor:pointer}
+  input[type=range]::-moz-range-thumb{width:10px;height:10px;border-radius:50%;background:var(--blue);border:2px solid #fff;cursor:pointer}
+  .tb-range{width:120px}
+  .tb-btns{display:flex;gap:7px;margin-left:auto}
+  button{
+    font:inherit;font-size:11.5px;font-weight:600;padding:6px 11px;border-radius:5px;cursor:pointer;
+    border:1px solid var(--line);background:#fff;color:var(--ink2);transition:.12s;
+  }
+  button:hover{border-color:#b9c2cc;background:#fafbfc}
+  button.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+  button.primary:hover{background:#2a63d4;border-color:#2a63d4}
+  button:disabled{opacity:.4;cursor:not-allowed}
+
+  /* ---------- bands ---------- */
+  .band{margin-bottom:18px}
+  .band-head{
+    display:flex;align-items:center;gap:11px;padding:7px 11px;background:#fff;
+    border:1px solid var(--line);border-left:4px solid var(--c,var(--blue));border-radius:7px;margin-bottom:14px;
+  }
+  .band-tag{
+    font-size:9px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#fff;
+    background:var(--c,var(--blue));padding:3px 6px;border-radius:3px;
+  }
+  .band-title{font-size:13px;font-weight:700;letter-spacing:0;text-transform:none}
+  .band-flow{
+    margin-left:auto;font-family:ui-monospace,Menlo,monospace;font-size:10px;color:var(--faint);
+    letter-spacing:0;white-space:nowrap;
+  }
+  .map-wrap{width:max-content;min-width:100%;padding:0 40px 50px;box-sizing:border-box}
+  .map{display:flex;align-items:flex-start;gap:22px}
+  .cluster{display:flex;flex-direction:column;gap:12px;flex:0 0 auto}
+  .cluster-head{
+    display:flex;align-items:baseline;gap:10px;padding:7px 10px;background:#fff;
+    border:1px solid var(--line);border-left:4px solid var(--c);
+  }
+  .cluster-head .band-flow{margin-left:auto}
+  .cluster-row{display:flex;align-items:flex-start;gap:28px}
+  .cluster-row .stage{flex:0 0 auto}
+  .map-arrow{
+    margin-top:88px;flex:0 0 auto;font-family:ui-monospace,Menlo,monospace;
+    font-size:18px;color:#9aa4b0;
+  }
+
+  /* the repeated transformer block */
+  .block-group{
+    display:flex;flex-direction:column;gap:12px;flex:0 0 auto;
+    border:2px solid #c3ccd6;padding:10px 12px 12px;background:rgba(255,255,255,.45);
+  }
+  .block-head{display:flex;align-items:baseline;gap:14px}
+  .block-title{font-size:12px;font-weight:700}
+  .block-spec{font-size:10px;color:var(--faint)}
+  .block-body{display:flex;align-items:flex-start;gap:22px}
+  .repeat{
+    align-self:stretch;display:flex;flex-direction:column;justify-content:center;
+    align-items:center;gap:8px;padding:0 12px;flex:0 0 auto;
+    border:2px solid #c3ccd6;border-left:none;
+  }
+  .repeat-mark{font-family:ui-monospace,Menlo,monospace;font-size:22px;font-weight:700;color:var(--ink);white-space:nowrap}
+  .repeat-sub{font-size:9px;color:var(--faint);text-align:center;line-height:1.4;max-width:96px}
+
+  .shape-note{margin-top:16px;padding-top:10px;border-top:1px solid var(--line2);max-width:740px}
+  .shape-note-title{font-size:11px;font-weight:700;margin-bottom:4px}
+  .shape-note p{margin:0 0 4px;font-size:9.5px;color:var(--muted);line-height:1.55}
+
+  /* RoPE worked example */
+  .rope-tbl{width:100%;border-collapse:collapse;font-family:ui-monospace,Menlo,monospace;font-size:9.5px;font-variant-numeric:tabular-nums}
+  .rope-tbl th{font-weight:500;color:var(--faint);font-size:8.5px;text-align:right;padding:2px 4px;border-bottom:1px solid var(--line2);white-space:nowrap}
+  .rope-tbl td{color:var(--ink2);text-align:right;padding:2px 4px;border-bottom:1px solid var(--line2);white-space:nowrap}
+  .rope-tbl th:first-child,.rope-tbl td:first-child{text-align:left}
+  .rope-tbl tr.hl td{background:rgba(124,77,255,.07)}
+
+  /* multiplication layout: one X, three × W = result rows */
+  .eqgrid{
+    display:grid;grid-template-columns:auto auto auto auto auto;
+    gap:12px 10px;align-items:center;justify-content:center;
+    overflow:visible;padding:2px 0;
+  }
+  .eqgrid .eqx{grid-row:1 / span 3;grid-column:1;align-self:center}
+  .eqop{
+    font-family:ui-monospace,Menlo,monospace;font-size:15px;color:#7b8492;
+    padding:0 2px;user-select:none;
+  }
+
+  .stage{
+    position:relative;display:flex;flex-direction:column;
+    background:#fff;border:1px solid var(--sb);border-radius:9px;padding:10px 11px 8px;
+    box-shadow:0 1px 2px rgba(20,30,45,.04);
+  }
+  .stage.blue{--c:#2f6fed;--sb:#c9d9f7;--sf:#f4f8ff;--cell:rgba(47,111,237,var(--a))}
+  .stage.purple{--c:#7c4dff;--sb:#ded4fb;--sf:#f8f5ff;--cell:rgba(124,77,255,var(--a))}
+  .stage.orange{--c:#dd8a34;--sb:#f0ddc6;--sf:#fdf8f1;--cell:rgba(221,138,52,var(--a))}
+  .stage.green{--c:#1f9d55;--sb:#c9e6d5;--sf:#f4faf7;--cell:rgba(31,157,85,var(--a))}
+  .stage.teal{--c:#0e9594;--sb:#c6e5e4;--sf:#f2fafa;--cell:rgba(14,149,148,var(--a))}
+  .stage.rose{--c:#d64550;--sb:#f0d1d4;--sf:#fdf5f6;--cell:rgba(214,69,80,var(--a))}
+
+  .stage:not(:last-child)::after{
+    content:"";position:absolute;top:86px;right:-21px;width:14px;border-top:2px solid var(--c);opacity:.85;
+  }
+  .stage:not(:last-child)::before{
+    content:"";position:absolute;top:82px;right:-8px;z-index:2;
+    border-left:8px solid var(--c);border-top:4px solid transparent;border-bottom:4px solid transparent;opacity:.85;
+  }
+
+  .stage-head{display:flex;align-items:baseline;gap:6px;margin-bottom:2px}
+  .stage-num{
+    font-family:ui-monospace,Menlo,monospace;font-size:9px;font-weight:700;letter-spacing:.06em;
+    color:#fff;background:var(--c);padding:1px 4px;border-radius:3px;
+  }
+  .stage-title{font-size:11px;font-weight:700;letter-spacing:0;text-transform:none;color:var(--ink)}
+  .stage-formula{
+    font-family:ui-monospace,Menlo,monospace;font-size:9.5px;color:var(--c);letter-spacing:0;
+    margin:1px 0 7px;text-transform:none;
+  }
+  .stage-body{flex:1}
+  .stage-shape{
+    margin-top:8px;padding-top:5px;border-top:1px solid var(--line2);
+    font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:0;color:var(--faint);text-align:right;
+  }
+
+  .box{
+    border:1px solid var(--sb);background:var(--sf);border-radius:6px;padding:6px 7px 7px;margin-bottom:7px;
+  }
+  .box:last-child{margin-bottom:0}
+  .box-label{
+    display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-bottom:4px;
+    font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:0;color:var(--muted);
+  }
+  .box-label b{color:var(--ink);font-weight:600;font-size:9.5px}
+
+  .tok-card{
+    display:flex;align-items:center;gap:6px;padding:3px 6px;margin-bottom:4px;
+    background:#fff;border:1px solid var(--sb);border-radius:4px;
+    font-family:ui-monospace,Menlo,monospace;font-size:10px;
+  }
+  .tok-card.gen{border-color:var(--green-b);background:#f7fdfa}
+  .tok-name{color:var(--ink);font-weight:600}
+  .tok-id{color:var(--faint);margin-left:auto;font-size:9px}
+
+  /* matrices as CSS grid */
+  .mat-scroll{overflow:visible;padding-bottom:2px}
+  .mgrid{display:grid;gap:2px;min-width:max-content}
+  .mwrap{display:flex;flex-direction:column;gap:4px}
+  .mwrap-row{display:flex;gap:6px;align-items:flex-start}
+  .mwrap .mcell.mrow{position:static;flex:0 0 54px;background:transparent;max-width:54px}
+  .mvals{display:flex;flex-wrap:wrap;gap:2px;flex:1;min-width:0}
+  .mvals .mval{flex:0 0 38px;width:38px;height:38px}
+  .mcell{
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:9.5px;
+    display:flex;align-items:center;justify-content:flex-end;
+    background:#fff;border:1px solid var(--line2);border-radius:3px;padding:2px 4px;min-height:18px;
+    font-variant-numeric:tabular-nums;color:var(--ink2);
+  }
+  .mcell.mrow{
+    justify-content:flex-end;border-color:transparent;background:var(--sf);
+    color:var(--muted);font-size:9px;padding-right:4px;
+    position:sticky;left:0;z-index:1;white-space:nowrap;
+    max-width:54px;overflow:hidden;text-overflow:ellipsis;
+  }
+  .mcell.mcol{
+    justify-content:center;border-color:transparent;background:transparent;
+    color:var(--faint);font-size:8.5px;padding:0;
+  }
+  .mcell.corner{border-color:transparent;background:transparent}
+  .mcell.mval{justify-content:center;padding:0;width:38px;height:38px;min-height:0;align-self:center;overflow:hidden}
+  .mcell.mval.masked{color:#b3bcc6;background:#fafbfc}
+  .mcell.hl{box-shadow:inset 0 0 0 1.2px var(--c)}
+  .mat-note{
+    font-family:ui-monospace,Menlo,monospace;font-size:8.5px;color:var(--faint);
+    display:block;margin-top:4px;line-height:1.4;
+  }
+
+  .formula{
+    font-family:Georgia,"Times New Roman",serif;font-style:italic;font-size:11px;line-height:1.5;color:#3d4653;
+    background:#fbfcfd;border:1px solid var(--line2);border-left:2px solid var(--c);border-radius:0 4px 4px 0;
+    padding:5px 7px;margin:0 0 7px;overflow-x:auto;white-space:nowrap;
+  }
+  .formula b{font-family:ui-monospace,Menlo,monospace;font-style:normal;font-size:9.5px;font-weight:600}
+  .note{font-size:9.5px;color:var(--muted);line-height:1.45;margin:5px 0 0;max-width:340px}
+  .note b{color:var(--ink2)}
+  .mini{font-family:ui-monospace,Menlo,monospace;font-size:9px;color:var(--faint)}
+
+  .sumlist{margin:5px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:2px}
+  .sumlist li{
+    display:flex;justify-content:space-between;gap:6px;
+    font-family:ui-monospace,Menlo,monospace;font-size:9px;color:var(--muted);
+  }
+  .sumlist b{color:var(--ink2);font-weight:600}
+
+  /* probability + logit lists */
+  .plist{display:flex;flex-direction:column;gap:3px;margin-top:2px}
+  .prow{display:grid;grid-template-columns:58px 46px 1fr 42px;gap:6px;align-items:center;
+    font-family:ui-monospace,Menlo,monospace;font-size:10px;padding:1px 0}
+  .prow .tk{color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .prow .lg{color:var(--faint);text-align:right;font-size:9px}
+  .prow .pc{color:var(--muted);text-align:right;font-size:9px}
+  .prow.pick .tk{color:var(--ink);font-weight:700}
+  .prow.pick .pc{color:var(--c);font-weight:700}
+  .bar-track{height:7px;background:#eef1f4;border-radius:99px;overflow:hidden}
+  .bar-fill{height:100%;border-radius:99px;background:var(--c);opacity:.75}
+  .prow.pick .bar-fill{opacity:1}
+  .list-note{font-family:ui-monospace,Menlo,monospace;font-size:9px;color:var(--faint);margin-top:6px}
+
+  .steps{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:4px}
+  .steps li{
+    display:flex;align-items:center;gap:7px;font-family:ui-monospace,Menlo,monospace;font-size:9.5px;
+    color:var(--muted);border:1px solid var(--line2);border-radius:4px;padding:3px 6px;background:#fff;
+  }
+  .steps .n{color:var(--faint)}
+  .steps .w{color:var(--ink);font-weight:700}
+  .steps .pp{margin-left:auto;color:var(--faint)}
+  .out-seq{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--ink2);word-break:break-word}
+
+  .skip-rail{
+    display:flex;align-items:center;gap:10px;margin:10px 2px 0;
+    font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:0;
+    color:var(--faint);
+  }
+  .skip-rail::before,.skip-rail::after{content:"";flex:1;border-top:1.5px dashed #b8c2cc}
+  .skip-rail b{color:var(--teal);font-weight:600}
+  .band-note{
+    margin:8px 2px 0;max-width:1120px;font-size:10px;line-height:1.55;color:var(--faint);
+  }
+  .band-note b{color:var(--ink2);font-weight:600}
+  .band-connector{
+    display:flex;align-items:center;justify-content:center;gap:8px;margin:2px auto 16px;
+    font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--blue);background:var(--blue-f);border:1px solid var(--blue-b);border-radius:99px;
+    padding:4px 14px;width:max-content;
+  }
+
+  footer{padding:14px 0 44px;color:var(--muted);font-size:10.5px}
+  .foot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px;margin-top:14px}
+  .foot-card{background:#fff;border:1px solid var(--line);border-radius:7px;padding:11px 13px}
+  .foot-card h3{
+    margin:0 0 5px;font-size:11px;letter-spacing:0;color:var(--ink);font-weight:700;
+  }
+  .foot-card p{margin:0;color:var(--muted);font-size:10.5px;line-height:1.55}
+  .close{max-width:none;margin:0;padding:0}
+
+  @media (max-width:900px){
+    .band-flow{display:none}
+  }
+  @media (max-width:680px){
+    .wrap{padding:0 18px}
+    .map-wrap{padding:0 18px 40px}
+    .tb-btns{margin-left:0;width:100%}
+    .tb-btns button{flex:1}
+  }
+  *,*::before,*::after{border-radius:0 !important}
+  input[type=range]::-webkit-slider-thumb{border-radius:0 !important}
+  input[type=range]::-moz-range-thumb{border-radius:0 !important}
+</style>
+</head>
+<body>
+
+<div class="wrap mast">
+  <h1>How an LLM works, end to end</h1>
+  <div class="meta-row">
+    <span class="meta">tokens <b id="mTokens">2</b></span>
+    <span class="meta">d <b id="mD">4</b></span>
+    <span class="meta">vocab <b id="mVocab">24</b></span>
+    <span class="meta">temperature <b id="mTemp">0.80</b></span>
+    <span class="meta">seed <b id="mSeed">1234</b></span>
+    <span class="meta">heads <b>1</b></span>
+    <span class="meta">layers <b>1</b></span>
+  </div>
+  <div class="legend">
+    <span><i style="background:#2f6fed"></i>input / projections</span>
+    <span><i style="background:#7c4dff"></i>scores / unembedding</span>
+    <span><i style="background:#dd8a34"></i>softmax / feed-forward</span>
+    <span><i style="background:#1f9d55"></i>values / sampling</span>
+    <span><i style="background:#0e9594"></i>add &amp; norm</span>
+  </div>
+  <div class="seq-bar" id="seqBar"></div>
+</div>
+
+<div class="toolbar" id="toolbar">
+  <div class="wrap tb-inner">
+    <div class="tb-group grow">
+      <label for="text">Input text</label>
+      <input id="text" type="text" value="the cat sat on the mat" spellcheck="false" autocomplete="off">
+    </div>
+    <div class="tb-group">
+      <label for="nTokens">Input tokens <output id="nOut">2</output></label>
+      <input id="nTokens" class="tb-range" type="range" min="1" max="8" step="1" value="2">
+    </div>
+    <div class="tb-group">
+      <label for="d">Embedding dim d <output id="dOut">4</output></label>
+      <input id="d" class="tb-range" type="range" min="2" max="8" step="1" value="4">
+    </div>
+    <div class="tb-group">
+      <label for="temp">Temperature <output id="tOut">0.80</output></label>
+      <input id="temp" class="tb-range" type="range" min="0.1" max="2" step="0.05" value="0.8">
+    </div>
+    <div class="tb-group">
+      <label for="seed">Weight seed <output id="seedOut">1234</output></label>
+      <input id="seed" class="tb-range" type="range" min="1" max="9999" step="1" value="1234">
+    </div>
+    <div class="tb-btns">
+      <button class="primary" id="genBtn">Generate next token</button>
+      <button id="resetBtn">Reset sequence</button>
+    </div>
+  </div>
+</div>
+
+<div class="map-wrap">
+  <div class="map">
+
+    <!-- ============ INPUT PATH ============ -->
+    <section class="cluster" style="--c:#2f6fed">
+      <div class="cluster-head">
+        <span class="band-title">Input — from text to vectors</span>
+        <span class="band-flow" id="band0flow">text → N token ids → X (N × d)</span>
+      </div>
+      <div class="cluster-row">
+        <article class="stage blue" id="s1">
+          <div class="stage-head"><span class="stage-num">01</span><span class="stage-title">Tokenize</span></div>
+          <div class="stage-formula">text → [ t<sub>0</sub> … t<sub>n−1</sub> ] → integer ids</div>
+          <div class="stage-body">
+            <div class="box" id="s1text"></div>
+            <div id="s1tokens"></div>
+            <p class="note">The tokenizer is the only component that touches raw text. Real tokenizers learn merges (BPE / SentencePiece) over ~50k–200k tokens; this demo splits on words and punctuation and looks ids up in a 24-word vocabulary.</p>
+          </div>
+          <div class="stage-shape" id="sh1"></div>
+        </article>
+
+        <article class="stage blue" id="s2">
+          <div class="stage-head"><span class="stage-num">02</span><span class="stage-title">Embedding lookup</span></div>
+          <div class="stage-formula">X = E[id]</div>
+          <div class="stage-body">
+            <div id="s2mats"></div>
+            <p class="note">Each id selects one row of the learned matrix <b>E</b>. No position is added here — <b>RoPE</b> injects position inside attention.</p>
+          </div>
+          <div class="stage-shape" id="sh2"></div>
+        </article>
+      </div>
+
+      <div class="shape-note">
+        <div class="shape-note-title">Tensor shape invariance</div>
+        <p class="mini" id="shapeChain"></p>
+        <p>Every stage preserves the token count and returns to width <b>d</b> — that is what lets transformer blocks stack.</p>
+      </div>
+    </section>
+
+    <div class="map-arrow">→</div>
+
+    <section class="block-group">
+      <div class="block-head">
+        <span class="block-title">Transformer block</span>
+        <span class="block-spec">Simplified here: 1 head, d = 4, 24-token vocab · real models: 32–128 heads per layer, d = 4096–16384, ~100k tokens per layer, no dropout / KV cache / top-p</span>
+      </div>
+      <div class="block-body">
+
+    <!-- ============ PART 1 ============ -->
+    <section class="cluster" style="--c:#2f6fed">
+      <div class="cluster-head">
+        <span class="band-title">Part 1 — self-attention mechanism</span>
+        <span class="band-flow" id="band1flow">X (2 × 4) → attention output O (2 × 4)</span>
+      </div>
+      <div class="cluster-row">
+        <article class="stage blue" id="s3">
+          <div class="stage-head"><span class="stage-num">03</span><span class="stage-title">Linear projections</span></div>
+          <div class="stage-formula">Q = XW<sub>q</sub>&nbsp;&nbsp;K = XW<sub>k</sub>&nbsp;&nbsp;V = XW<sub>v</sub></div>
+          <div class="stage-body" id="s3body"></div>
+          <div class="stage-shape" id="sh3"></div>
+        </article>
+
+        <article class="stage purple" id="s4">
+          <div class="stage-head"><span class="stage-num">04</span><span class="stage-title">RoPE — rotary position</span></div>
+          <div class="stage-formula">q′<sub>i</sub> = R(i) q<sub>i</sub>&nbsp;&nbsp;k′<sub>j</sub> = R(j) k<sub>j</sub></div>
+          <div class="stage-body" id="s4body"></div>
+          <div class="stage-shape" id="sh4"></div>
+        </article>
+
+        <article class="stage purple" id="s5">
+          <div class="stage-head"><span class="stage-num">05</span><span class="stage-title">Scaled dot-product</span></div>
+          <div class="stage-formula">S = Q′K′<sup>T</sup> / √d</div>
+          <div class="stage-body" id="s5body"></div>
+          <div class="stage-shape" id="sh5"></div>
+        </article>
+
+        <article class="stage orange" id="s6">
+          <div class="stage-head"><span class="stage-num">06</span><span class="stage-title">Row-wise softmax</span></div>
+          <div class="stage-formula">A = softmax(S)</div>
+          <div class="stage-body" id="s6body"></div>
+          <div class="stage-shape" id="sh6"></div>
+        </article>
+
+        <article class="stage green" id="s7">
+          <div class="stage-head"><span class="stage-num">07</span><span class="stage-title">Weighted value sum</span></div>
+          <div class="stage-formula">Z = A V</div>
+          <div class="stage-body" id="s7body"></div>
+          <div class="stage-shape" id="sh7"></div>
+        </article>
+
+        <article class="stage blue" id="s8">
+          <div class="stage-head"><span class="stage-num">08</span><span class="stage-title">Output projection</span></div>
+          <div class="stage-formula">O = Z W<sub>o</sub></div>
+          <div class="stage-body" id="s8body"></div>
+          <div class="stage-shape" id="sh8"></div>
+        </article>
+      </div>
+
+      <div class="skip-rail"><span>causal mask: each token only attends to itself and the past</span></div>
+      <p class="band-note"><b>Scope:</b> stages 01–02 are the input path (text → vectors). Stages 03–08 are the attention computation itself, ending with the output projection. A decoder-only LLM (GPT, Llama, Claude) contains <b>only causal self-attention</b>, repeated in every layer. Cross-attention belongs to encoder–decoder models (the original Transformer, T5), where the decoder attends to encoder outputs as a separate sub-layer — the two never run at the same time.</p>
+    </section>
+
+    <div class="map-arrow">→</div>
+
+    <!-- ============ PART 2 ============ -->
+    <section class="cluster" style="--c:#0e9594">
+      <div class="cluster-head">
+        <span class="band-title">Part 2 — residual &amp; feed-forward</span>
+        <span class="band-flow" id="band2flow">O (2 × 4) → block output L₂ (2 × 4)</span>
+      </div>
+      <div class="cluster-row">
+        <article class="stage teal" id="s9">
+          <div class="stage-head"><span class="stage-num">09</span><span class="stage-title">Add &amp; norm 1</span></div>
+          <div class="stage-formula">L<sub>1</sub> = LayerNorm(X + O)</div>
+          <div class="stage-body" id="s9body"></div>
+          <div class="stage-shape" id="sh9"></div>
+        </article>
+
+        <article class="stage orange" id="s10">
+          <div class="stage-head"><span class="stage-num">10</span><span class="stage-title">Position-wise FFN</span></div>
+          <div class="stage-formula">H = GELU(L<sub>1</sub>W<sub>1</sub><sup>T</sup>+b<sub>1</sub>)&nbsp;&nbsp;M = HW<sub>2</sub><sup>T</sup>+b<sub>2</sub></div>
+          <div class="stage-body" id="s10body"></div>
+          <div class="stage-shape" id="sh10"></div>
+        </article>
+
+        <article class="stage teal" id="s11">
+          <div class="stage-head"><span class="stage-num">11</span><span class="stage-title">Add &amp; norm 2</span></div>
+          <div class="stage-formula">L<sub>2</sub> = LayerNorm(L<sub>1</sub> + M)</div>
+          <div class="stage-body" id="s11body"></div>
+          <div class="stage-shape" id="sh11"></div>
+        </article>
+      </div>
+
+      <div class="skip-rail"><span><b>skip connection</b> — X (and L<sub>1</sub>) bypass the block and are re-added</span></div>
+    </section>
+
+      </div>
+    </section>
+
+    <div class="repeat">
+      <div class="repeat-mark">× L</div>
+      <div class="repeat-sub">layers<br>L = 30–120 in real models</div>
+    </div>
+
+    <div class="map-arrow">→</div>
+
+    <!-- ============ PART 3 ============ -->
+    <section class="cluster" style="--c:#7c4dff">
+      <div class="cluster-head">
+        <span class="band-title">Part 3 — vocabulary projection &amp; generation</span>
+        <span class="band-flow" id="band3flow">h (d) → probabilities (|V|) → one new token</span>
+      </div>
+      <div class="cluster-row">
+        <article class="stage purple" id="s12">
+          <div class="stage-head"><span class="stage-num">12</span><span class="stage-title">Unembedding → logits</span></div>
+          <div class="stage-formula">logits = E<sub>out</sub> h</div>
+          <div class="stage-body" id="s12body"></div>
+          <div class="stage-shape" id="sh12"></div>
+        </article>
+
+        <article class="stage orange" id="s13">
+          <div class="stage-head"><span class="stage-num">13</span><span class="stage-title">Softmax with temperature</span></div>
+          <div class="stage-formula">p = softmax(logits / T)</div>
+          <div class="stage-body" id="s13body"></div>
+          <div class="stage-shape" id="sh13"></div>
+        </article>
+
+        <article class="stage green" id="s14">
+          <div class="stage-head"><span class="stage-num">14</span><span class="stage-title">Sample &amp; loop</span></div>
+          <div class="stage-formula">x<sub>t+1</sub> ~ p &nbsp;→&nbsp; append &nbsp;→&nbsp; repeat</div>
+          <div class="stage-body" id="s14body"></div>
+          <div class="stage-shape" id="sh14"></div>
+        </article>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+
+
+<script>
+(function(){
+  "use strict";
+
+  /* ---------- helpers ---------- */
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const fmt = v => (isFinite(v) ? (Math.abs(v) < 0.005 ? "0.00" : v.toFixed(2)) : "—");
+  const pct = p => (p * 100).toFixed(1) + "%";
+  const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+
+  function hashStr(str){
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < str.length; i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+  function mulberry32(a){
+    return function(){
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  const rngFor = parts => mulberry32(hashStr(parts.join("|")));
+  function rndMat(rows, cols, salt){
+    const r = rngFor([salt, rows, cols, "M"]);
+    return Array.from({length: rows}, () => Array.from({length: cols}, () => (r() * 2 - 1) * 0.95));
+  }
+  function rndVec(len, salt){
+    const r = rngFor([salt, len, "V"]);
+    return Array.from({length: len}, () => (r() * 2 - 1) * 0.95);
+  }
+
+  /* ---------- vocabulary & tokenizer ---------- */
+  const VOCAB = ["the","cat","sat","on","mat","a","dog","ran","fast",".","and","was","happy",
+                 "very","big","small","jumped","over","it","quietly","then","slept","again","home"];
+  const MAXGEN = 6;
+
+  function tokenize(text){
+    const out = [];
+    const re = /[A-Za-z]+(?:'[A-Za-z]+)?|[0-9]+|[^\sA-Za-z0-9]/g;
+    let m;
+    while ((m = re.exec(text)) !== null && out.length < 12) out.push(m[0].toLowerCase());
+    return out;
+  }
+  function tokenId(tok){
+    const i = VOCAB.indexOf(tok);
+    return i >= 0 ? i : 1000 + (hashStr("oov:" + tok) % 49000);
+  }
+  const isKnown = tok => VOCAB.indexOf(tok) >= 0;
+
+  const embCache = new Map();
+  function embedding(tok, d, seed){
+    const key = seed + "|" + d + "|" + tok;
+    if (embCache.has(key)) return embCache.get(key);
+    const r = rngFor([seed, d, tok, "emb"]);
+    const v = Array.from({length: d}, () => (r() * 2 - 1) * 0.95);
+    embCache.set(key, v);
+    return v;
+  }
+
+  /* ---------- math ---------- */
+  function zeros(n, d){ return Array.from({length: n}, () => new Array(d).fill(0)); }
+  function addm(A, B){ return A.map((row, i) => row.map((v, j) => v + B[i][j])); }
+  function mm(A, B){
+    const rows = A.length, cols = B[0].length, inner = B.length;
+    const out = zeros(rows, cols);
+    for (let i = 0; i < rows; i++){
+      for (let k = 0; k < inner; k++){
+        const a = A[i][k];
+        if (a === 0) continue;
+        for (let j = 0; j < cols; j++) out[i][j] += a * B[k][j];
+      }
+    }
+    return out;
+  }
+  function softmax(v){
+    let max = -Infinity;
+    for (const x of v) if (x > max) max = x;
+    const e = v.map(x => (isFinite(x) ? Math.exp(x - max) : 0));
+    let s = 0;
+    for (const x of e) s += x;
+    return e.map(x => x / (s || 1));
+  }
+  function layernorm(v){
+    const n = v.length;
+    let mu = 0;
+    for (const x of v) mu += x;
+    mu /= n;
+    let va = 0;
+    for (const x of v) va += (x - mu) * (x - mu);
+    va /= n;
+    const sd = Math.sqrt(va + 1e-5);
+    return { out: v.map(x => (x - mu) / sd), mu, sd };
+  }
+  const GELU_C = Math.sqrt(2 / Math.PI);
+  const gelu = x => 0.5 * x * (1 + Math.tanh(GELU_C * (x + 0.044715 * x * x * x)));
+
+  const maxAbs = rows => {
+    let m = 0.001;
+    for (const row of rows) for (const v of row) if (isFinite(v) && Math.abs(v) > m) m = Math.abs(v);
+    return m;
+  };
+
+  /* ---------- RoPE ---------- */
+  function ropeAngles(n, d){
+    const pairs = Math.floor(d / 2);
+    return Array.from({length: n}, (_, pos) =>
+      Array.from({length: pairs}, (_, i) => pos / Math.pow(10000, (2 * i) / d)));
+  }
+  function applyRope(vec, pos, d){
+    const out = vec.slice();
+    const pairs = Math.floor(d / 2);
+    for (let i = 0; i < pairs; i++){
+      const theta = pos / Math.pow(10000, (2 * i) / d);
+      const c = Math.cos(theta), s = Math.sin(theta);
+      const a = vec[2 * i], b = vec[2 * i + 1];
+      out[2 * i] = a * c - b * s;
+      out[2 * i + 1] = a * s + b * c;
+    }
+    return out;
+  }
+
+  /* ---------- forward pass ---------- */
+  function forward(tokens, d, seed){
+    const n = tokens.length;
+    const E = tokens.map(t => embedding(t, d, seed));
+    const X = E.map(row => row.slice());
+
+    const Wq = rndMat(d, d, seed + "|Wq");
+    const Wk = rndMat(d, d, seed + "|Wk");
+    const Wv = rndMat(d, d, seed + "|Wv");
+    const Wo = rndMat(d, d, seed + "|Wo");
+    const Qraw = mm(X, Wq), Kraw = mm(X, Wk), V = mm(X, Wv);
+    const Q = Qraw.map((row, i) => applyRope(row, i, d));
+    const K = Kraw.map((row, i) => applyRope(row, i, d));
+    const scale = 1 / Math.sqrt(d);
+
+    const S = Array.from({length: n}, (_, i) =>
+      Array.from({length: n}, (_, j) => (j <= i ? dot(Q[i], K[j]) * scale : -Infinity)));
+    const A = S.map(row => softmax(row));
+    const Z = mm(A, V);
+    const O = mm(Z, Wo);
+
+    const R1 = addm(X, O);
+    const ln1 = R1.map(layernorm);
+    const L1 = ln1.map(r => r.out);
+
+    const hd = 4 * d;
+    const W1 = rndMat(hd, d, seed + "|W1");
+    const b1 = rndVec(hd, seed + "|b1").map(v => v * 0.4);
+    const hidden = L1.map(row => W1.map((w, j) => gelu(dot(w, row) + b1[j])));
+    const W2 = rndMat(d, hd, seed + "|W2");
+    const b2 = rndVec(d, seed + "|b2").map(v => v * 0.4);
+    const M = hidden.map(row => W2.map((w, j) => dot(w, row) + b2[j]));
+
+    const R2 = addm(L1, M);
+    const ln2 = R2.map(layernorm);
+    const L2 = ln2.map(r => r.out);
+    const h = L2[n - 1];
+
+    const Eout = VOCAB.map(t => rndVec(d, seed + "|unembed|" + t));
+    const logits = Eout.map(row => dot(row, h));
+
+    return { tokens, d, n, E, X, Wq, Wk, Wv, Wo, Qraw, Kraw, Q, K, V,
+             angles: ropeAngles(n, d), S, A, Z, O,
+             R1, ln1, L1, W1, b1, hidden, W2, b2, M, R2, ln2, L2, h, Eout, logits };
+  }
+
+  /* ---------- state ---------- */
+  const state = { text: "the cat sat on the mat", nTokens: 2, d: 4, temp: 0.8, seed: 1234, gen: [] };
+
+  function baseTokens(){
+    const all = tokenize(state.text);
+    const cut = all.slice(0, state.nTokens);
+    return cut.length ? cut : ["the"];
+  }
+  function currentTokens(){ return baseTokens().concat(state.gen.map(g => g.token)); }
+
+  /* ---------- rendering primitives ---------- */
+  function vcell(v, max, hl){
+    if (!isFinite(v)) return '<div class="mcell mval masked">—</div>';
+    const t = Math.max(-1, Math.min(1, v / max));
+    const a = Math.min(0.17, Math.abs(t) * 0.17);
+    const bg = t >= 0
+      ? 'rgba(47,111,237,' + a.toFixed(3) + ')'
+      : 'rgba(214,69,80,' + a.toFixed(3) + ')';
+    return '<div class="mcell mval' + (hl ? ' hl' : '') + '" style="background:' + bg + '">' + fmt(v) + '</div>';
+  }
+
+  function mat(rows, opts){
+    opts = opts || {};
+    const rowLabels = opts.rowLabels, colLabels = opts.colLabels;
+    const max = opts.max || maxAbs(rows);
+    const hi = (opts.hi === undefined ? -1 : opts.hi);
+    const cols = rows[0].length;
+    const cellMin = opts.cellMin || 38;
+    let colsCss = '54px repeat(' + cols + ', ' + cellMin + 'px)';
+
+    let h = '<div class="mat">';
+    if (opts.name || opts.label){
+      h += '<div class="box-label"><span>' + (opts.label || '') + '</span>' +
+           '<b>' + (opts.name || '') + '</b></div>';
+    }
+    if (opts.wrap){
+      h += '<div class="mwrap">';
+      rows.forEach((row, i) => {
+        h += '<div class="mwrap-row"><span class="mcell mrow' + (i === hi ? ' hl' : '') + '">' +
+             (rowLabels ? esc(rowLabels[i]) : i) + '</span><div class="mvals">';
+        for (const v of row) h += vcell(v, max, i === hi);
+        h += '</div></div>';
+      });
+      h += '</div>';
+      if (opts.note) h += '<span class="mat-note">' + opts.note + '</span>';
+      return h + '</div>';
+    }
+    h += '<div class="mat-scroll"><div class="mgrid" style="grid-template-columns:' + colsCss + '">';
+    h += '<div class="mcell corner"></div>';
+    for (let j = 0; j < cols; j++) h += '<div class="mcell mcol">' + (colLabels ? esc(colLabels[j]) : j) + '</div>';
+    rows.forEach((row, i) => {
+      h += '<div class="mcell mrow' + (i === hi ? ' hl' : '') + '">' +
+           (rowLabels ? esc(rowLabels[i]) : i) + '</div>';
+      for (const v of row) h += vcell(v, max, i === hi);
+    });
+    h += '</div></div>';
+    if (opts.note) h += '<span class="mat-note">' + opts.note + '</span>';
+    return h + '</div>';
+  }
+
+  function box(inner, cls){ return '<div class="box ' + (cls || '') + '">' + inner + '</div>'; }
+
+  function formula(html){ return '<div class="formula">' + html + '</div>'; }
+
+  function setShape(id, text){ $(id).textContent = 'Shape: ' + text; }
+
+  /* ---------- render ---------- */
+  function render(){
+    const base = baseTokens();
+    const tokens = base.concat(state.gen.map(g => g.token));
+    const fw = forward(tokens, state.d, state.seed);
+    const probs = softmax(fw.logits.map(l => l / state.temp));
+
+    $("mTokens").textContent = tokens.length;
+    $("mD").textContent = state.d;
+    $("mVocab").textContent = VOCAB.length;
+    $("mTemp").textContent = state.temp.toFixed(2);
+    $("mSeed").textContent = state.seed;
+
+    $("band0flow").textContent = 'text → ' + fw.n + ' token ids → X (' + fw.n + ' × ' + state.d + ')';
+    $("band1flow").textContent = 'X (' + fw.n + ' × ' + state.d + ') → attention output O (' +
+      fw.n + ' × ' + state.d + ')';
+    $("band2flow").textContent = 'O (' + fw.n + ' × ' + state.d + ') → block output L₂ (' +
+      fw.n + ' × ' + state.d + ')';
+    $("band3flow").textContent = 'h (' + state.d + ') → probabilities (' + VOCAB.length + ') → one new token';
+    $("shapeChain").textContent = 'text → ids (' + fw.n + ') → X (' + fw.n + '×' + state.d +
+      ') → Q,K,V → S (' + fw.n + '×' + fw.n + ') → A → Z (' + fw.n + '×' + state.d +
+      ') → O → L₁ → H (' + fw.n + '×' + (4 * state.d) +
+      ') → M → L₂ (' + fw.n + '×' + state.d + ') → h (' + state.d + ')';
+
+    renderSeq(base, tokens);
+    render1(fw, tokens, base);
+    render2(fw, tokens);
+    render3(fw, tokens);
+    render4(fw, tokens);
+    render5(fw, tokens);
+    render6(fw, tokens);
+    render7(fw, tokens);
+    render8(fw, tokens);
+    render9(fw, tokens);
+    render10(fw, tokens);
+    render11(fw, tokens);
+    render12(fw, probs);
+    render13(fw, probs);
+    render14(fw, probs);
+
+    $("genBtn").disabled = state.gen.length >= MAXGEN;
+    $("genBtn").textContent = state.gen.length >= MAXGEN ? "Generation limit reached" : "Generate next token";
+  }
+
+  function renderSeq(base, tokens){
+    const g = state.gen;
+    let h = base.map(t => '<span class="chip">' + esc(t) + '</span>').join('<span class="arrow">·</span>');
+    if (g.length){
+      h += '<span class="arrow">·</span>' + g.map(x => '<span class="chip gen">' + esc(x.token) + '</span>')
+        .join('<span class="arrow">·</span>');
+      h += '<span class="arrow">→</span><span class="chip gen">' + esc(g[g.length - 1].token) + '</span>';
+    } else {
+      h += '<span class="arrow">→</span><span class="chip q">?</span>';
+    }
+    $("seqBar").innerHTML = h;
+  }
+
+  /* STAGE 1 — tokenize */
+  function render1(fw, tokens, base){
+    $("s1text").innerHTML = '<div class="box-label"><span>input text</span><b>' +
+      state.text.length + ' chars</b></div>' +
+      '<div class="out-seq">' + esc(state.text) + '</div>';
+    $("s1tokens").innerHTML = '<div class="box-label"><span>tokens</span><b>' + tokens.length + ' tokens</b></div>' +
+      tokens.map((t, i) =>
+        '<div class="tok-card' + (i >= base.length ? ' gen' : '') + '">' +
+        '<span class="tok-name">' + esc(t) + '</span>' +
+        '<span class="tok-id">id ' + tokenId(t) + (isKnown(t) ? '' : ' · UNK') + '</span></div>').join('');
+    setShape("sh1", fw.n + ' token ids');
+  }
+
+  /* STAGE 2 — embedding lookup */
+  function render2(fw, tokens){
+    $("s2mats").innerHTML =
+      box(mat(fw.E, { label: 'embedding lookup', name: 'E', rowLabels: tokens, hi: fw.n - 1 }));
+    setShape("sh2", fw.n + ' × ' + state.d);
+  }
+
+  /* STAGE 3 — linear projections */
+  function render3(fw, tokens){
+    const term = (W, wlabel, wname, R, rlabel, rname) =>
+      '<span class="eqop">×</span>' +
+      box(mat(W, { label: wlabel, name: wname })) +
+      '<span class="eqop">=</span>' +
+      box(mat(R, { label: rlabel, name: rname, rowLabels: tokens, hi: fw.n - 1 }));
+
+    $("s3body").innerHTML =
+      formula('<b>qᵢ = xᵢWq</b> · <b>kᵢ = xᵢWk</b> · <b>vᵢ = xᵢWv</b> &nbsp;— the same X, three different weight matrices') +
+      '<div class="eqgrid">' +
+        '<div class="eqx">' + box(mat(fw.X, { label: 'input to the block', name: 'X = E[id]', rowLabels: tokens })) + '</div>' +
+        term(fw.Wq, 'query weights · d × d', 'Wq', fw.Qraw, 'queries · not yet rotated', 'Q = XWq') +
+        term(fw.Wk, 'key weights · d × d', 'Wk', fw.Kraw, 'keys · not yet rotated', 'K = XWk') +
+        term(fw.Wv, 'value weights · d × d', 'Wv', fw.V, 'values · used as-is', 'V = XWv') +
+      '</div>' +
+      '<p class="note">All three projections read the <b>same</b> input <b>X</b>, each through its own learned matrix. Q and K are rotated by position next; V is not. What the three mean: what a token <b>asks for</b>, what it <b>offers</b>, and what it <b>passes on</b>.</p>';
+    setShape("sh3", 'X: ' + fw.n + ' × ' + state.d + ' · W: ' + state.d + ' × ' + state.d +
+      ' · Q, K, V: ' + fw.n + ' × ' + state.d);
+  }
+
+  /* STAGE 4 — RoPE */
+  function render4(fw, tokens){
+    const pairs = fw.angles[0].length;
+    const pairLabels = Array.from({length: pairs}, (_, i) => 'i' + i);
+
+    const example = tokens.map((t, i) => {
+      const theta = fw.angles[i][0];
+      const c = Math.cos(theta), s = Math.sin(theta);
+      const a = fw.Qraw[i][0], b = fw.Qraw[i][1];
+      const a2 = fw.Q[i][0], b2 = fw.Q[i][1];
+      return '<tr' + (i === 0 ? ' class="hl"' : '') + '>' +
+        '<td>' + esc(t) + '</td><td>' + i + '</td>' +
+        '<td>' + theta.toFixed(2) + '</td><td>' + c.toFixed(2) + '</td><td>' + s.toFixed(2) + '</td>' +
+        '<td>' + fmt(a) + '</td><td>' + fmt(b) + '</td>' +
+        '<td>' + fmt(a2) + '</td><td>' + fmt(b2) + '</td></tr>';
+    }).join('');
+
+    $("s4body").innerHTML =
+      box(mat(fw.angles, {
+        label: 'rotation angle θ = pos / 10000^(2i/d)', name: 'Θ',
+        rowLabels: tokens.map((_, i) => 'p' + i), colLabels: pairLabels
+      })) +
+      box(mat(fw.Q, { label: 'queries after rotation', name: 'Q′ = R(i) q', rowLabels: tokens, hi: fw.n - 1 })) +
+      box(mat(fw.K, { label: 'keys after rotation', name: 'K′ = R(j) k', rowLabels: tokens, hi: fw.n - 1 })) +
+      formula('θᵢ = pos / 10000<sup>2i/d</sup> &nbsp;— one angle per dimension pair i, per position') +
+      formula('a′ = a·cos θ − b·sin θ &nbsp;&nbsp; b′ = a·sin θ + b·cos θ &nbsp;— applied to each pair (a, b)') +
+      '<div class="box">' +
+        '<div class="box-label"><span>worked example · dimension pair 0 = (0,1)</span><b>Q before → after</b></div>' +
+        '<table class="rope-tbl"><thead><tr><th>token</th><th>pos</th><th>θ₀</th><th>cos</th><th>sin</th><th>q₀</th><th>q₁</th><th>q′₀</th><th>q′₁</th></tr></thead><tbody>' +
+        example + '</tbody></table>' +
+      '</div>' +
+      '<p class="note">Each pair of dimensions (2i, 2i+1) is rotated by its own angle — it is a rotation, not a scaling. At <b>pos 0</b> the angle is 0, so cos = 1 and sin = 0: an identity rotation, which is why the first token looks unchanged. Higher pairs use smaller angles, so they turn more slowly.</p>';
+    setShape("sh4", 'Θ: ' + fw.n + ' × ' + pairs + ' · Q′, K′: ' + fw.n + ' × ' + state.d);
+  }
+
+  /* STAGE 5 — scaled dot-product */
+  function render5(fw, tokens){
+    $("s5body").innerHTML =
+      box(mat(fw.S, {
+        label: 'scores · lower triangle only', name: 'S = Q′K′ᵀ / √d',
+        rowLabels: tokens, colLabels: tokens, hi: fw.n - 1
+      })) +
+      formula('Sᵢⱼ = (q′ᵢ · k′ⱼ) / √' + state.d + ' &nbsp;=&nbsp; scale 1/√' + state.d +
+        ' = ' + (1 / Math.sqrt(state.d)).toFixed(2)) +
+      '<p class="note"><b>—</b> is the causal mask: the future is excluded, otherwise the model would see the answer it must predict. The <b>diagonal</b> (qᵢ·kᵢ) is a token scoring itself; <b>off-diagonal</b> entries compare two positions of the <b>same</b> sequence — all of it is still self-attention.</p>';
+    setShape("sh5", fw.n + ' × ' + fw.n);
+  }
+
+  /* STAGE 6 — softmax */
+  function render6(fw, tokens){
+    const sums = fw.A.map((row, i) =>
+      '<li><span>row ' + i + ' · ' + esc(tokens[i]) + '</span><b>Σ = ' +
+      row.reduce((a, b) => a + b, 0).toFixed(3) + '</b></li>').join('');
+    $("s6body").innerHTML =
+      box(mat(fw.A, { label: 'attention weights', name: 'A', rowLabels: tokens, colLabels: tokens, max: 1, hi: fw.n - 1 })) +
+      formula('Aᵢⱼ = exp(Sᵢⱼ) / Σⱼ exp(Sᵢⱼ)') +
+      '<ul class="sumlist">' + sums + '</ul>' +
+      '<p class="note">Softmax runs along each row, turning relevance scores into a distribution that sums to 1.</p>';
+    setShape("sh6", fw.n + ' × ' + fw.n);
+  }
+
+  /* STAGE 7 — weighted value sum */
+  function render7(fw, tokens){
+    $("s7body").innerHTML =
+      box(mat(fw.Z, { label: 'context vectors', name: 'Z = A V', rowLabels: tokens, hi: fw.n - 1 })) +
+      '<p class="note">Each row is a blend of the <b>V</b> rows, weighted by that token\u2019s attention row — this is how information moves between positions.</p>';
+    setShape("sh7", fw.n + ' × ' + state.d);
+  }
+
+  /* STAGE 8 — output projection */
+  function render8(fw, tokens){
+    $("s8body").innerHTML =
+      box(mat(fw.Wo, { label: 'output weights', name: 'Wo' })) +
+      box(mat(fw.O, { label: 'attention output', name: 'O = Z Wo', rowLabels: tokens, hi: fw.n - 1 })) +
+      '<p class="note">Mixes the attention features and returns to <b>d</b> dimensions so the residual add lines up. This closes the attention sub-layer.</p>';
+    setShape("sh8", 'Wo: ' + state.d + ' × ' + state.d + ' · O: ' + fw.n + ' × ' + state.d);
+  }
+
+  /* STAGE 9 — add & norm 1 */
+  function render9(fw, tokens){
+    const stats = fw.ln1.map((r, i) =>
+      '<li><span>' + esc(tokens[i]) + ' (pre-norm)</span><b>μ ' + r.mu.toFixed(2) +
+      ' · σ ' + r.sd.toFixed(2) + '</b></li>').join('');
+    $("s9body").innerHTML =
+      box(mat(fw.R1, { label: 'residual sum', name: 'X + O', rowLabels: tokens, hi: fw.n - 1 })) +
+      box(mat(fw.L1, { label: 'normalized', name: 'L₁', rowLabels: tokens, max: 2, hi: fw.n - 1 })) +
+      '<ul class="sumlist">' + stats + '</ul>' +
+      '<p class="note">Residuals give gradients a shortcut; normalization re-centres every row to <b>μ = 0, σ = 1</b>.</p>';
+    setShape("sh9", fw.n + ' × ' + state.d);
+  }
+
+  /* STAGE 10 — feed-forward */
+  function render10(fw, tokens){
+    $("s10body").innerHTML =
+      box(mat(fw.hidden, {
+        label: 'hidden layer', name: 'H', rowLabels: tokens, hi: fw.n - 1, wrap: true,
+        note: 'expanded d → 4d, GELU applied — wraps to fit'
+      })) +
+      box(mat(fw.M, { label: 'back to model width', name: 'M', rowLabels: tokens, hi: fw.n - 1 })) +
+      formula('GELU(x) ≈ 0.5x(1 + tanh(√(2/π)(x + 0.044715x³)))') +
+      '<p class="note">Applied per token, independently. In real models this block holds about <b>two-thirds of all parameters</b>.</p>';
+    setShape("sh10", 'H: ' + fw.n + ' × ' + (4 * state.d) + ' · M: ' + fw.n + ' × ' + state.d);
+  }
+
+  /* STAGE 11 — add & norm 2 */
+  function render11(fw, tokens){
+    const norm = Math.sqrt(fw.h.reduce((s, x) => s + x * x, 0));
+    $("s11body").innerHTML =
+      box(mat(fw.R2, { label: 'residual sum', name: 'L₁ + M', rowLabels: tokens, hi: fw.n - 1 })) +
+      box(mat(fw.L2, { label: 'block output', name: 'Y = L₂', rowLabels: tokens, max: 2, hi: fw.n - 1 })) +
+      box(mat([fw.h], { label: 'last position only', name: 'h', rowLabels: [tokens[fw.n - 1]], max: 2 })) +
+      '<ul class="sumlist"><li><span>source token</span><b>' + esc(tokens[fw.n - 1]) +
+      '</b></li><li><span>‖h‖</span><b>' + norm.toFixed(2) + '</b></li></ul>' +
+      '<p class="note">This single row is the model\u2019s summary of the whole prefix — the vector it will turn into a next-token guess.</p>';
+    setShape("sh11", 'Y: ' + fw.n + ' × ' + state.d + ' · h: ' + state.d);
+  }
+
+  /* STAGE 12 — logits */
+  function render12(fw, probs){
+    const order = VOCAB.map((t, i) => i).sort((a, b) => probs[b] - probs[a]).slice(0, 8);
+    $("s12body").innerHTML =
+      box(mat([fw.h], { label: 'hidden state', name: 'h', rowLabels: ['h'], max: 2 })) +
+      formula('logitᵢ = <b>E<sub>out</sub>[i] · h</b> &nbsp; for each token i in the vocabulary') +
+      '<div class="box">' +
+        '<div class="box-label"><span>top scores</span><b>|V| = ' + VOCAB.length + '</b></div>' +
+        '<div class="plist">' + order.map(i =>
+          '<div class="prow"><span class="tk">' + esc(VOCAB[i]) + '</span>' +
+          '<span class="lg">' + fw.logits[i].toFixed(2) + '</span>' +
+          '<span class="bar-track"><span class="bar-fill" style="width:' +
+            Math.max(2, Math.abs(fw.logits[i]) / maxAbs([fw.logits]) * 100).toFixed(1) +
+            '%;opacity:.35"></span></span>' +
+          '<span class="pc"></span></div>').join('') + '</div>' +
+        '<div class="list-note">showing top 8 of ' + VOCAB.length + ' logits</div>' +
+      '</div>' +
+      '<p class="note">A logit is an unbounded score per token. Dot-product with the output matrix = the last big matmul of the model.</p>';
+    setShape("sh12", VOCAB.length + ' logits');
+  }
+
+  /* STAGE 13 — probabilities */
+  function render13(fw, probs){
+    const order = VOCAB.map((t, i) => i).sort((a, b) => probs[b] - probs[a]).slice(0, 10);
+    const top = probs[order[0]];
+    let entropy = 0;
+    for (const p of probs) if (p > 0) entropy -= p * Math.log2(p);
+    $("s13body").innerHTML =
+      formula('pᵢ = exp(logitᵢ / T) / Σⱼ exp(logitⱼ / T)') +
+      '<div class="box">' +
+        '<div class="box-label"><span>next-token distribution</span><b>T = ' + state.temp.toFixed(2) + '</b></div>' +
+        '<div class="plist">' + order.map(i =>
+          '<div class="prow' + (probs[i] === top ? ' pick' : '') + '">' +
+          '<span class="tk">' + esc(VOCAB[i]) + '</span>' +
+          '<span class="lg">' + fw.logits[i].toFixed(2) + '</span>' +
+          '<span class="bar-track"><span class="bar-fill" style="width:' +
+            Math.max(1.5, (probs[i] / top) * 100).toFixed(1) + '%"></span></span>' +
+          '<span class="pc">' + pct(probs[i]) + '</span></div>').join('') + '</div>' +
+        '<div class="list-note">showing top 10 · entropy ' + entropy.toFixed(2) + ' bits</div>' +
+      '</div>' +
+      '<p class="note"><b>T &lt; 1</b> sharpens toward the top token, <b>T &gt; 1</b> flattens the distribution.</p>';
+    setShape("sh13", VOCAB.length + ' probabilities');
+  }
+
+  /* STAGE 14 — sample & loop */
+  function render14(fw, probs){
+    const g = state.gen;
+    if (!g.length){
+      $("s14body").innerHTML =
+        formula('u ~ Uniform(0,1) &nbsp;→&nbsp; walk the CDF &nbsp;→&nbsp; pick token') +
+        '<div class="box"><div class="box-label"><span>current sequence</span><b>' +
+        currentTokens().length + ' tokens</b></div>' +
+        '<div class="out-seq">' + esc(currentTokens().join(' ')) + '</div></div>' +
+        '<p class="note">Press <b>Generate next token</b> above. With an untrained model every token is nearly equally likely, so the output is noise — that is the correct behaviour.</p>';
+    } else {
+      const last = g[g.length - 1];
+      $("s14body").innerHTML =
+        formula('u = ' + last.u.toFixed(3) + ' landed on <b>' + esc(last.token) + '</b> (p = ' + pct(last.p) + ')') +
+        '<div class="box"><div class="box-label"><span>sampled token is appended</span><b>' +
+        currentTokens().length + ' tokens</b></div>' +
+        '<div class="out-seq">' + esc(currentTokens().join(' ')) + '</div></div>' +
+        '<ul class="steps">' + g.map((x, i) =>
+          '<li><span class="n">#' + (i + 1) + '</span><span>→</span><span class="w">' + esc(x.token) +
+          '</span><span class="pp">p ' + pct(x.p) + '</span></li>').join('') + '</ul>' +
+        '<p class="note">Each step re-runs the entire pipeline on the longer sequence. That loop is all of autoregressive generation.</p>';
+    }
+    setShape("sh14", 'output: 1 token');
+  }
+
+  /* ---------- interaction ---------- */
+  function generateNext(){
+    if (state.gen.length >= MAXGEN) return;
+    const tokens = currentTokens();
+    const fw = forward(tokens, state.d, state.seed);
+    const probs = softmax(fw.logits.map(l => l / state.temp));
+    const u = rngFor([state.seed, state.d, tokens.join("|"), state.gen.length, "sample"])();
+    let acc = 0, pick = probs.length - 1;
+    for (let i = 0; i < probs.length; i++){
+      acc += probs[i];
+      if (u < acc){ pick = i; break; }
+    }
+    state.gen.push({ token: VOCAB[pick], p: probs[pick], u: u });
+    render();
+  }
+
+  function fitToolbar(){
+    const tb = document.getElementById("toolbar");
+    if (!tb || !document.body) return;
+    document.body.style.paddingTop = tb.offsetHeight + "px";
+  }
+
+  function syncLabels(){
+    $("nOut").textContent = state.nTokens;
+    $("dOut").textContent = state.d;
+    $("tOut").textContent = state.temp.toFixed(2);
+    $("seedOut").textContent = state.seed;
+  }
+
+  $("text").addEventListener("input", e => { state.text = e.target.value; state.gen = []; render(); });
+  $("nTokens").addEventListener("input", e => { state.nTokens = +e.target.value; state.gen = []; syncLabels(); render(); });
+  $("d").addEventListener("input", e => { state.d = +e.target.value; state.gen = []; syncLabels(); render(); });
+  $("temp").addEventListener("input", e => { state.temp = +e.target.value; syncLabels(); render(); });
+  $("seed").addEventListener("input", e => { state.seed = +e.target.value; state.gen = []; syncLabels(); render(); });
+  $("genBtn").addEventListener("click", generateNext);
+  $("resetBtn").addEventListener("click", () => { state.gen = []; render(); });
+
+  syncLabels();
+  render();
+  fitToolbar();
+  window.addEventListener("resize", fitToolbar);
+})();
+</script>
+</body>
+</html>
