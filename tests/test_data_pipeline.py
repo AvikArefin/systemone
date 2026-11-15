@@ -34,6 +34,33 @@ def test_len_counts_examples_not_rows(tokenizer, cfg):
     assert rows == 1 + 3 + 3
 
 
+def test_batches_cover_every_example_once_and_respect_the_row_cap(tokenizer, cfg):
+    """A batch is capped by rows, not examples -- an example is one row per candidate."""
+    encoded = EncodedSet.build(_examples(), tokenizer, cfg)
+    counts = encoded.row_counts()
+    assert counts == [1, 3, 3]
+
+    batches = encoded.batches(max_rows=4)
+    assert [index for batch in batches for index in batch] == [0, 1, 2]
+    for batch in batches:
+        assert sum(counts[index] for index in batch) <= 4
+
+
+def test_one_huge_example_forms_its_own_batch(tokenizer, cfg):
+    """A 2,000-candidate choice must not drag other examples into its grid."""
+    wide = Example(
+        state="pick one",
+        question=Choice(instructions="which?", criteria=[f"option {i}" for i in range(12)]),
+        label="option 3",
+    )
+    encoded = EncodedSet.build([wide, *(_examples() * 4)], tokenizer, cfg)
+    batches = encoded.batches(max_rows=8)
+    first = batches[0]
+    assert first == [0], "the oversized example gets a batch to itself"
+    assert encoded.row_counts()[0] == 12
+    assert all(sum(encoded.row_counts()[i] for i in batch) <= 8 for batch in batches[1:])
+
+
 def test_offsets_are_monotonic_and_cover_the_flat_buffers(tokenizer, cfg):
     encoded = EncodedSet.build(_examples(), tokenizer, cfg)
     for offsets, data in (

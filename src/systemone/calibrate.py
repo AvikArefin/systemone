@@ -14,16 +14,14 @@ def collect_logits(
     model: TinyJev,
     dataset: EncodedSet,
     device: torch.device | None = None,
-    batch_size: int = 16,
+    max_rows: int = 256,
 ) -> dict[str, list[tuple[Tensor, float]]]:
     device = device or next(model.parameters()).device
     model.to(device).eval()
     collected: dict[str, list[tuple[Tensor, float]]] = {kind: [] for kind in KIND_ORDER}
     with torch.no_grad():
-        for start in range(0, len(dataset), batch_size):
-            batch = dataset.collate(
-                range(start, min(start + batch_size, len(dataset)))
-            ).to(device)
+        for chunk in dataset.batches(max_rows):
+            batch = dataset.collate(chunk).to(device)
             logits = model(batch.state_ids, batch.state_mask, batch.query_ids, batch.query_mask)
             for group in range(len(batch.kinds)):
                 index = (batch.group_ids == group).nonzero(as_tuple=True)[0]

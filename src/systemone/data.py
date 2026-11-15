@@ -184,6 +184,31 @@ class EncodedSet:
     def __len__(self) -> int:
         return self.targets.numel()
 
+    def row_counts(self) -> list[int]:
+        return (self.row_offsets[1:] - self.row_offsets[:-1]).tolist()
+
+    def batches(self, max_rows: int = 256) -> list[list[int]]:
+        """Group example indices so each batch stays under `max_rows` rows.
+
+        A batch holds examples, and an example expands into one row per
+        candidate -- an S1MB choice can carry thousands. Bounding the example
+        count therefore bounds nothing; the attention mask grows with
+        rows * tokens^2, so rows is the number that has to be capped.
+        """
+        counts = self.row_counts()
+        out: list[list[int]] = []
+        batch: list[int] = []
+        total = 0
+        for index, count in enumerate(counts):
+            if batch and total + count > max_rows:
+                out.append(batch)
+                batch, total = [], 0
+            batch.append(index)
+            total += count
+        if batch:
+            out.append(batch)
+        return out
+
     @classmethod
     def build(
         cls, examples: list[Example], tokenizer: Tokenizer, cfg: ModelConfig

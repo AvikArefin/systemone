@@ -194,26 +194,29 @@ def test_rope_is_relative_only_through_positions():
     assert torch.equal(a, b)
 
 
-def test_positions_restart_for_the_query_segment():
+def test_positions_restart_for_the_query_segment(monkeypatch):
     """State uses 0..S-1 and query uses 0..T-1 independently.
 
     If this changes, trained checkpoints are invalid (docs/12-code-map.md
     invariant 6), so it is worth pinning.
     """
+    import systemone.model as model_module
+
     cfg = _cfg()
     model = TinyJev(cfg).eval()
     state = torch.randint(2, cfg.vocab_size, (1, 4))
     query = torch.randint(2, cfg.vocab_size, (1, 4))
-    seen = {}
+    seen = []
+    original = model_module._rope
 
-    def hook(_module, inputs, _output):
-        seen["pos"] = inputs[1].detach().clone()
+    def spy(x, pos, base):
+        seen.append(pos.detach().clone().tolist())
+        return original(x, pos, base)
 
-    handle = model.blocks[0].register_forward_hook(hook)
+    monkeypatch.setattr(model_module, "_rope", spy)
     model(state, torch.ones_like(state, dtype=torch.bool), query, torch.ones_like(query, dtype=torch.bool))
-    handle.remove()
-    positions = seen["pos"][0].tolist()
-    assert positions == [0, 1, 2, 3, 0, 1, 2, 3]
+    assert seen[0] == seen[1] == [[0, 1, 2, 3]], "state positions count from 0"
+    assert seen[2] == seen[3] == [[0, 1, 2, 3]], "query positions restart at 0"
 
 
 def test_gqa_is_enabled_when_head_counts_differ():

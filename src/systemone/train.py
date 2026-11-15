@@ -15,10 +15,25 @@ class History:
     evals: list[tuple[int, float]] = field(default_factory=list)
 
 
+def _chunks(dataset: EncodedSet, order: list[int], max_rows: int):
+    counts = dataset.row_counts()
+    batch: list[int] = []
+    total = 0
+    for index in order:
+        count = counts[index]
+        if batch and total + count > max_rows:
+            yield batch
+            batch, total = [], 0
+        batch.append(index)
+        total += count
+    if batch:
+        yield batch
+
+
 def evaluate(
     model: TinyJev,
     dataset: EncodedSet,
-    batch_size: int = 16,
+    max_rows: int = 256,
     device: torch.device | None = None,
 ) -> float:
     device = device or next(model.parameters()).device
@@ -26,8 +41,8 @@ def evaluate(
     total = 0.0
     count = 0
     with torch.no_grad():
-        for start in range(0, len(dataset), batch_size):
-            batch = dataset.collate(range(start, min(start + batch_size, len(dataset)))).to(device)
+        for chunk in dataset.batches(max_rows):
+            batch = dataset.collate(chunk).to(device)
             logits = model(batch.state_ids, batch.state_mask, batch.query_ids, batch.query_mask)
             total += batch_loss(logits, batch).item()
             count += 1
@@ -38,7 +53,7 @@ def train(
     model: TinyJev,
     dataset: EncodedSet,
     epochs: int = 20,
-    batch_size: int = 16,
+    max_rows: int = 256,
     lr: float = 3e-3,
     weight_decay: float = 0.01,
     grad_clip: float = 1.0,
@@ -55,7 +70,7 @@ def train(
         model.parameters(), lr=lr, weight_decay=weight_decay
     )
 
-    steps_per_epoch = math.ceil(len(dataset) / batch_size)
+    steps_per_epoch = len(dataset.batches(max_rows))
     total_steps = max(1, steps_per_epoch * epochs)
     warmup_steps = int(total_steps * warmup_fraction)
 
@@ -74,8 +89,7 @@ def train(
 
     for epoch in range(epochs):
         rng.shuffle(order)
-        for start in range(0, len(order), batch_size):
-            chunk = order[start : start + batch_size]
+        for chunk in _chunks(dataset, order, max_rows):
             batch = dataset.collate(chunk).to(device)
             logits = model(batch.state_ids, batch.state_mask, batch.query_ids, batch.query_mask)
             loss = batch_loss(logits, batch)
@@ -88,7 +102,7 @@ def train(
             history.lrs.append(scheduler.get_last_lr()[0])
             step += 1
         if eval_dataset is not None and (epoch + 1) % eval_every == 0:
-            history.evals.append((epoch + 1, evaluate(model, eval_dataset, batch_size, device)))
+            history.evals.append((epoch + 1, evaluate(model, eval_dataset, max_rows, device)))
             model.to(device).train()
 
     model.eval()

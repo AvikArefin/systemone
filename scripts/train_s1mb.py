@@ -73,7 +73,7 @@ history = train(
     model,
     train_data,
     epochs=EPOCHS,
-    batch_size=32,
+    max_rows=256,
     lr=2e-3,
     device=device,
     seed=SEED,

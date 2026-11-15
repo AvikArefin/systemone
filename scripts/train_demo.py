@@ -80,7 +80,7 @@ train_data = EncodedSet.build(train_set, tokenizer, cfg)
 test_data = EncodedSet.build(test_set, tokenizer, cfg)
 
 before = evaluate(model, test_data)
-history = train(model, train_data, epochs=40, batch_size=16, lr=3e-3)
+history = train(model, train_data, epochs=40, max_rows=256, lr=3e-3)
 after = evaluate(model, test_data)
 print(f"params={cfg.parameter_count():,}")
 print(f"loss first={history.losses[0]:.4f} last={history.losses[-1]:.4f}")

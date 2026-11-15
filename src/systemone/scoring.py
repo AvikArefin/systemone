@@ -206,7 +206,7 @@ def probabilities_by_group(
     model,
     dataset,
     device: torch.device | None = None,
-    batch_size: int = 16,
+    max_rows: int = 256,
     temperatures: dict[str, float] | None = None,
 ) -> list[list[float]]:
     """Run the model and return one distribution per dataset example."""
@@ -218,9 +218,8 @@ def probabilities_by_group(
     model.to(device).eval()
     out: list[list[float]] = []
     with torch.no_grad():
-        for start in range(0, len(dataset), batch_size):
-            stop = min(start + batch_size, len(dataset))
-            batch = dataset.collate(range(start, stop)).to(device)
+        for chunk in dataset.batches(max_rows):
+            batch = dataset.collate(chunk).to(device)
             logits = model(
                 batch.state_ids, batch.state_mask, batch.query_ids, batch.query_mask
             )

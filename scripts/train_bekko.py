@@ -19,7 +19,7 @@ SEED = 0
 NAME = "bekko_tiny"
 MAX_CASES = int(os.environ.get("BEKKO_CASES", "1000"))
 EPOCHS = int(os.environ.get("SYSTEMONE_EPOCHS", "2"))
-BATCH = int(os.environ.get("SYSTEMONE_BATCH", "32"))
+MAX_ROWS = int(os.environ.get("SYSTEMONE_MAX_ROWS", "256"))
 
 set_seed(SEED)
 device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
@@ -69,7 +69,7 @@ history = train(
     model,
     train_data,
     epochs=EPOCHS,
-    batch_size=BATCH,
+    max_rows=MAX_ROWS,
     lr=2e-3,
     device=device,
     seed=SEED,

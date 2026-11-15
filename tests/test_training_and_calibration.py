@@ -95,7 +95,7 @@ def test_training_reduces_the_loss(tokenizer):
     model = TinyJev(cfg)
     data = EncodedSet.build(_learnable_dataset(), tokenizer, cfg)
     before = evaluate(model, data, device=torch.device("cpu"))
-    history = train(model, data, epochs=40, batch_size=8, lr=3e-3, device=torch.device("cpu"))
+    history = train(model, data, epochs=40, max_rows=24, lr=3e-3, device=torch.device("cpu"))
     after = evaluate(model, data, device=torch.device("cpu"))
     assert history.losses[-1] < history.losses[0]
     assert after < before
@@ -105,8 +105,8 @@ def test_history_records_one_lr_and_loss_per_step(tokenizer):
     cfg = _cfg()
     model = TinyJev(cfg)
     data = EncodedSet.build(_dataset(count=16), tokenizer, cfg)
-    history = train(model, data, epochs=2, batch_size=8, lr=1e-3)
-    steps = 2 * math.ceil(len(data) / 8)
+    history = train(model, data, epochs=2, max_rows=24, lr=1e-3)
+    steps = 2 * len(data.batches(24))
     assert len(history.losses) == steps
     assert len(history.lrs) == steps
 
@@ -115,7 +115,7 @@ def test_warmup_starts_below_the_peak_and_cosine_decays(tokenizer):
     cfg = _cfg()
     model = TinyJev(cfg)
     data = EncodedSet.build(_dataset(count=32), tokenizer, cfg)
-    history = train(model, data, epochs=10, batch_size=4, lr=1e-3)
+    history = train(model, data, epochs=10, max_rows=16, lr=1e-3)
     peak = max(history.lrs)
     assert history.lrs[0] < peak, "warmup must start below the peak"
     assert history.lrs[-1] < peak, "cosine must decay below the peak"
@@ -135,7 +135,7 @@ def test_training_is_seed_reproducible_on_cpu(tokenizer):
             build_model(cfg, 7),
             data,
             epochs=2,
-            batch_size=8,
+            max_rows=24,
             lr=1e-3,
             device=torch.device("cpu"),
             seed=7,

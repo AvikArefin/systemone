@@ -63,7 +63,7 @@ test_data = load_or_build(directory / "test_cache.pt", test_set, tokenizer, cfg)
 before = evaluate(model, test_data, device=device)
 started = time.perf_counter()
 history = train(
-    model, train_data, epochs=8, batch_size=24, lr=2e-3, device=device, seed=SEED
+    model, train_data, epochs=8, max_rows=256, lr=2e-3, device=device, seed=SEED
 )
 print(f"train_s={time.perf_counter() - started:.1f}")
 after = evaluate(model, test_data, device=device)

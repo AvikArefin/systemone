@@ -28,15 +28,17 @@ class Attention(nn.Module):
         self.v_proj = nn.Linear(cfg.d_model, cfg.n_kv_heads * self.head_dim, bias=False)
         self.o_proj = nn.Linear(cfg.n_heads * self.head_dim, cfg.d_model, bias=False)
 
-    def forward(self, x: Tensor, pos: Tensor, mask: Tensor) -> Tensor:
+    def project(self, x: Tensor, pos: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         b, t, _ = x.shape
         q = self.q_proj(x).view(b, t, self.n_heads, self.head_dim).transpose(1, 2)
         k = self.k_proj(x).view(b, t, self.n_kv_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).view(b, t, self.n_kv_heads, self.head_dim).transpose(1, 2)
-        q = _rope(q, pos, self.rope_base)
-        k = _rope(k, pos, self.rope_base)
+        return _rope(q, pos, self.rope_base), _rope(k, pos, self.rope_base), v
+
+    def attend(self, q: Tensor, k: Tensor, v: Tensor, mask: Tensor) -> Tensor:
+        b, _, t, _ = q.shape
         out = F.scaled_dot_product_attention(
-            q, k, v, attn_mask=mask[:, None], enable_gqa=self.n_heads != self.n_kv_heads
+            q, k, v, attn_mask=mask, enable_gqa=self.n_heads != self.n_kv_heads
         )
         return self.o_proj(out.transpose(1, 2).reshape(b, t, -1))
 
@@ -51,10 +53,53 @@ class Block(nn.Module):
         self.up = nn.Linear(cfg.d_model, cfg.ffn_hidden, bias=False)
         self.down = nn.Linear(cfg.ffn_hidden, cfg.d_model, bias=False)
 
-    def forward(self, x: Tensor, pos: Tensor, mask: Tensor) -> Tensor:
-        x = x + self.attn(self.attn_norm(x), pos, mask)
+    def _ffn(self, x: Tensor) -> Tensor:
         h = self.ffn_norm(x)
         return x + self.down(F.silu(self.gate(h)) * self.up(h))
+
+    def forward(
+        self,
+        state: Tensor,
+        query: Tensor,
+        state_pos: Tensor,
+        query_pos: Tensor,
+        state_mask: Tensor,
+        query_attn_mask: Tensor,
+    ) -> tuple[Tensor, Tensor]:
+        # Two attention calls, no rows x tokens^2 grid. The state half is
+        # bidirectional and needs only a per-key flag; the query half needs
+        # causality (a per-query-position rule) plus the same flag. Splitting by
+        # query set keeps both masks small instead of building one grid per row.
+        state_q, state_k, state_v = self.attn.project(self.attn_norm(state), state_pos)
+        query_q, query_k, query_v = self.attn.project(self.attn_norm(query), query_pos)
+
+        state_out = self.attn.attend(
+            state_q, state_k, state_v, state_mask[:, None, None, :]
+        )
+        query_out = self.attn.attend(
+            query_q,
+            torch.cat([state_k, query_k], dim=2),
+            torch.cat([state_v, query_v], dim=2),
+            query_attn_mask,
+        )
+        return self._ffn(state + state_out), self._ffn(query + query_out)
+
+
+def _query_mask(state_mask: Tensor, query_mask: Tensor) -> Tensor:
+    """What a query token may see: all real state, and queries up to itself.
+
+    Shape is [rows, 1, query_len, total], not [rows, 1, total, total] -- the
+    causal rule depends only on relative position, so it costs query_len * total
+    instead of total^2.
+    """
+    s_len = state_mask.shape[1]
+    q_len = query_mask.shape[1]
+    total = s_len + q_len
+    keys = torch.arange(total, device=state_mask.device)
+    queries = torch.arange(q_len, device=state_mask.device)
+    allowed = keys.unsqueeze(0) <= (s_len + queries).unsqueeze(1)
+    key_mask = torch.cat([state_mask, query_mask], dim=1).bool()
+    return (allowed.unsqueeze(0) & key_mask.unsqueeze(1)).unsqueeze(1)
 
 
 class TinyJev(nn.Module):
@@ -87,34 +132,21 @@ class TinyJev(nn.Module):
     ) -> Tensor:
         s_len = state_ids.shape[1]
         q_len = query_ids.shape[1]
-        total = s_len + q_len
         device = state_ids.device
 
-        hidden = torch.cat([self.embed(state_ids), self.embed(query_ids)], dim=1)
-        pos = torch.cat(
-            [torch.arange(s_len, device=device), torch.arange(q_len, device=device)]
-        ).unsqueeze(0)
-
-        is_query = torch.cat(
-            [
-                torch.zeros(s_len, dtype=torch.bool, device=device),
-                torch.ones(q_len, dtype=torch.bool, device=device),
-            ]
-        )
-        causal = torch.arange(total, device=device).unsqueeze(0) <= torch.arange(
-            total, device=device
-        ).unsqueeze(1)
-        allowed = (~is_query).unsqueeze(0) | (
-            is_query.unsqueeze(0) & is_query.unsqueeze(1) & causal
-        )
-        key_mask = torch.cat([state_mask, query_mask], dim=1).bool()
-        mask = allowed.unsqueeze(0) & key_mask.unsqueeze(1)
+        state = self.embed(state_ids)
+        query = self.embed(query_ids)
+        state_pos = torch.arange(s_len, device=device).unsqueeze(0)
+        query_pos = torch.arange(q_len, device=device).unsqueeze(0)
+        query_attn_mask = _query_mask(state_mask, query_mask)
 
         for block in self.blocks:
-            hidden = block(hidden, pos, mask)
+            state, query = block(
+                state, query, state_pos, query_pos, state_mask, query_attn_mask
+            )
 
-        hidden = self.norm(hidden)
-        query_hidden = hidden[:, s_len:, :]
+        query = self.norm(query)
         last = (query_mask.sum(dim=1).clamp(min=1) - 1).view(-1, 1, 1)
-        pooled = query_hidden.gather(1, last.expand(-1, 1, hidden.shape[-1])).squeeze(1)
+        pooled = query.gather(1, last.expand(-1, 1, query.shape[-1])).squeeze(1)
         return self.truth_head(pooled).squeeze(-1)
+
