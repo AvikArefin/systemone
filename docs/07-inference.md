@@ -24,7 +24,9 @@ All questions share one state and are answered in **one batched forward pass**.
 1. **Truncate the state** to `cfg.max_state_tokens` using head/tail truncation.
 2. **Expand every question into rows** — one per candidate, or one for `noul`.
 3. **Pad** all rows to the widest row (each row already built to its own budget).
-4. **Repeat the state** once per row.
+4. **Keep the state once per question.** Every candidate row carries the same
+   state, and the state cannot see the query, so its encoding is identical across
+   them — the model computes it once and reuses it.
 5. **Forward pass** → one logit per row.
 6. **Group and normalise** — softmax within each question, after dividing by that
    kind's calibration temperature.
@@ -34,6 +36,9 @@ Batches are capped by **rows**, not by examples (`EncodedSet.batches(max_rows)`)
 One request can expand into thousands of rows, and the attention mask grows with
 rows × tokens², so the example count is not a useful limit. See
 [Architecture](03-architecture.md#the-mask-is-not-a-grid).
+
+Serving passes one state with `group_ids = zeros(rows)`, so the tower is computed
+once for the request rather than once per candidate.
 
 Two details that are easy to get wrong:
 

@@ -174,11 +174,11 @@ Memory per forward at the two configurations, measured with
 `scripts/measure_attention_memory.py` (attention call only, 4 heads, 32-dim):
 
 ```
-rows   full grid mask   split mask   full grid   split
-  16            13 MB         2 MB       14 ms     7 ms
-  64            51 MB         7 MB       18 ms    15 ms
- 128           103 MB        15 MB       35 ms    28 ms
- 256           206 MB        30 MB       89 ms    52 ms
+rows   full grid mask   split mask   full grid   split   shared
+  16            13 MB         2 MB       17 ms     8 ms     3 ms
+  64            51 MB         7 MB       18 ms    16 ms     6 ms
+ 128           103 MB        15 MB       36 ms    28 ms     8 ms
+ 256           206 MB        30 MB       99 ms    53 ms    10 ms
 ```
 
 Two fixes, both kept:
@@ -197,39 +197,52 @@ The rewrite is numerically identical: the reference logits from before the chang
 reproduce exactly (`max_abs_diff=0.000e+00`), because the attention pattern is
 unchanged — only how the mask is expressed.
 
-## What is still on the table
+## Sharing the state tower across candidates
 
-Two measured inefficiencies remain. Neither is a capacity problem; both are work
-we do twice or do on filler.
+Every candidate row of a question carries the same state, and the state cannot
+see the query, so its encoding is *identical* across those rows. Nothing about
+that requires recomputing it. `EncodedSet.collate` now returns one state per
+group plus `group_ids`, and the model runs the state half once per group, then
+gathers its K/V to the rows for the query half.
 
-**1.41× of attention work is padding.** Batching to the longest row in the batch
-means shorter rows are processed at that length. Measured on the S1MB test split
-with `max_rows=256`, padded tokens are 2.18M against 1.54M real.
+Measured on 20 S1MB configs (4,399 cases, 41,444 rows, `max_rows=256`), model
+time only:
 
-**2.5× of the state tower is redundant.** An example expands into one row per
-candidate, and every one of those rows carries the same state. Because the state
-cannot see the query (prefix-LM, [Architecture](03-architecture.md)), its hidden
-states and its K/V are *identical* across those rows — yet each is computed
-separately. Rows per case: p50 1, p99 28, and one case in the corpus has 2,416
-candidates.
+```
+shared tower      6.58 s
+repeated per row 11.54 s
+```
 
-Two changes would take them, in this order:
+1.75× over the split, and 1.95× on the worst single batch (99 ms vs 193 ms,
+256 rows from 168 groups). The duplication factor is 2.5× on average, p99 28×,
+and one case in the corpus has 2,416 candidates.
 
-- **Shared prefix.** Compute the state tower once per case, then reuse its K/V
-  across that case's candidate rows. Exact, not an approximation, and it removes
-  the 2.5× (for the 2,416-candidate case, essentially all of it). This is the
-  same idea as KV caching — the account is "don't compute identical work twice",
-  just across candidates instead of across decode steps.
-- **Length bucketing.** Group rows by exact state length so no state padding
-  exists. That removes the 1.41× *and* the remaining mask: with no padding there
-  is nothing to exclude, so the query call can use `is_causal=True` (0 bytes
-  instead of 30 MB, 28 ms instead of 52 ms). The cost is more, smaller batches
-  when lengths are scattered — the long states all sit exactly at the 192 cap and
-  bucket perfectly, but short states fragment.
+Output is unchanged: `max_abs_diff=0.000e+00` against logits captured before the
+change, and the smoke-split Task Avgs match exactly.
 
-Neither is done yet. Bucketing in particular needs a real measurement before it
-is trusted: fewer rows per batch means more kernel launches, and that can easily
-cost more than the padding it saves at these sequence lengths.
+## Bucketing by length was measured and rejected
+
+The remaining waste is padding: 1.41× of attention work is tokens that exist only
+to make the batch rectangular. The obvious fix is to group rows by exact state
+length so no padding exists — no state padding means the state call needs no
+mask, and the causal rule collapses to one tensor for the whole batch.
+
+It was implemented and benchmarked, and it does not pay:
+
+```
+                batches   eval time
+natural order       227        9.0 s
+length-bucketed     371        9.1 s
+```
+
+Lengths scatter across 1–192, so exact grouping fragments the batches: 63% more
+batches, each with its own launch. The padding it removes is cheaper than the
+overhead it adds. Reverted; `batches()` visits examples in dataset order.
+
+The shared causal rule that bucketing was going to enable is kept anyway, because
+it also applies to serving (one state per request, no padding) and costs nothing
+when there is padding to AND it with.
+
 
 
 

@@ -68,6 +68,7 @@ logits [R]  ──►  batch_loss (per group)  ──►  backward
 | Change head count or GQA ratio | `config.py` | `n_heads % n_kv_heads == 0` and even `head_dim` |
 | Change the token budget | `config.py` | `max_state_tokens`, `max_query_tokens` |
 | Change how many rows go in a batch | `data.py` | `EncodedSet.batches(max_rows)` — rows, never examples; a choice carries one row per candidate |
+| Change where the state tower runs | `model.py` | `TinyJev.forward(..., group_ids)` — one state per group, not per row |
 | Change the prompt template | `prompt.py` | `_render` is the only place |
 | Change loss weighting | `data.py` | `batch_loss` — currently equal per group |
 | Change LR/schedule | `train.py` | `warmup_fraction`, `min_lr_ratio` |

@@ -83,27 +83,28 @@ Instead each block makes **two attention calls**, one per query set:
 
 | call | queries | keys | mask |
 |---|---|---|---|
-| state | state | state | `[rows, 1, 1, s]` — one flag per key |
-| query | query | state + query | `[rows, 1, q, s+q]` — causal rule AND the same flag |
+| state | state (one per group) | state | `[groups, 1, 1, s]` — one flag per key, or nothing when there is no padding |
+| query | query (one per row) | state + query | `[1, 1, q, s+q]` — the causal rule, narrowed per row only if the batch has padding |
 
-The causal rule depends only on relative position, so the query mask costs
-`q × (s+q)` per row instead of `(s+q)²`. Neither call materialises a grid.
+The causal rule depends only on relative position, so one tensor serves the whole
+batch: `q × (s+q)` cells, not `rows × (s+q)²`. Neither call materialises a grid.
 
-`is_causal=True` alone cannot be used here: padding sits *inside* the prefix a
-query attends to, and SDPA does not accept `is_causal` and `attn_mask`
-together. The state half is bidirectional, so a causal flag would also be
-wrong for it. Splitting by query set is what buys the same saving without
-changing the attention pattern.
+`is_causal=True` cannot express this pattern, and it is worth knowing why.
+PyTorch aligns the causal triangle **top-left** for non-square Q/K, so with
+`s + q` keys a query would see only the first few state tokens. Verified against
+an explicit mask: top-left matches exactly, bottom-right differs by 2.2. The flag
+is usable for `q == s + q`, which is never our case.
 
 Measured with `scripts/measure_attention_memory.py` at 256 rows, state 768,
 query 128 (one attention call):
 
 ```
 strategy      mask tensor   attention
-full grid         206 MB        89 ms
-split (ours)       30 MB        52 ms
-is_causal           0 MB        28 ms   (no padding handling; not applicable)
-key-pad only        0 MB        57 ms   (no causality; not applicable)
+full grid         206 MB        99 ms
+split, per-row     30 MB        53 ms
+shared rule         0 MB        10 ms   (what the model does now)
+is_causal           0 MB        28 ms   (wrong pattern, see above)
+key-pad only        0 MB        58 ms   (no causality)
 ```
 
 ### Why padding needs a mask, and causality does not
@@ -120,14 +121,19 @@ row 2: [ 70 real tokens          ]
 Attention is a weighted sum — nothing in the arithmetic knows the last 30 values
 are filler. They have to be excluded explicitly, and that exclusion is the
 padding mask. Causality is different: "token *i* may look at keys ≤ *i*" follows
-from position alone, so the kernel can derive it from a flag and never needs a
-tensor.
+from position alone, so it costs one shared tensor no matter how many rows there
+are.
 
-So there are two ways to get rid of the mask: express the rule (a flag), or
-remove what the rule cannot express (the padding). Grouping rows by exact state
-length does the second — no PAD tokens exist, so there is nothing to exclude, and
-the query call becomes `is_causal=True` with a zero-byte mask. We do not do this
-yet: see [Experiments](11-experiments.md#what-is-still-on-the-table).
+The two can be separated. The causal rule is built once for the batch; only when
+a batch actually contains padding does it get ANDed with a per-row key flag. A
+batch with no padding therefore needs only the shared tensor, and its state call
+needs no mask at all. That is the state of the current code
+(`model.py`, `_causal_rule`).
+
+The obvious next step — group rows by exact state length so padding never exists
+— was measured and is **not** worth it: it turns 227 batches into 371 and the
+saving in padded work is cancelled by the extra launches. See
+[Experiments](11-experiments.md#bucketing-by-length-was-measured-and-rejected).
 
 
 ## Inside one block
