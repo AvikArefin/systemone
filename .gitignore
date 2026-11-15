@@ -9,6 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
+# Local agent workspace: taste notes, session state
+.commandcode/
+
 # Training artifacts: checkpoints and token caches
 artifacts/
 

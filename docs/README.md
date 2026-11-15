@@ -29,24 +29,30 @@ decision data rather than general web text.
 | 12 | [Code map](12-code-map.md) | Which file does what |
 | 13 | [Deployment](13-deployment.md) | Why 1M parameters, and what fits on a chip |
 
-## Status: read the experiments page with care
+## Status: retrained, first comparable number
 
-Every measured number in these docs was produced before a bug fix that restored
-the candidate text to the model. The short version:
+The encoding bug is fixed and the model has been retrained on clean rows. The
+first Task Avg this project can honestly quote:
 
-- Rows were truncated front-only, so ~45% of S1MB candidate rows lost the option
-  being judged, and 27% of `choice` groups collapsed to a single encoding.
-- The reported "0.534 overall" is mostly the label marginals: always answering
-  false scores 0.715 on `noul`, and the modal `score` level scores 0.501.
-- On the baseline-adjusted metric the existing checkpoint is at roughly **zero**
-  adjusted skill, not 53.
-- The conclusion "the 1M model is capacity-bound" is **withdrawn**: it was drawn
-  from data that was corrupted at every scale tested.
+```
+Task Avg = 1.04        (laya 13.36, bekko-17m 27.57, jev 59.59)
+  noul   2.71
+  choice 0.40
+  score  0.00
+```
 
-The encoding, the metric, and the loader are fixed; the test suite pins them. What
-is left is a retrain on clean rows, then a real Task Avg. See
-[Experiments](11-experiments.md) for the measurements and what they do and do not
-support.
+That is a low number but a real one. `choice` raw accuracy rose 0.308 → 0.362,
+which is the kind the bug damaged and the only kind that improved. `score` is flat
+zero across all 21 of its benchmarks, which is the clearest thing to fix next.
+
+Two caveats worth keeping in mind:
+
+- This was 1 epoch on 300 cases/subset. Nothing indicates convergence.
+- Old figures in these docs (0.534 raw accuracy and the conclusions drawn from it)
+  came from rows that had lost their candidates. They are kept, labelled, in
+  [Experiments](11-experiments.md), not deleted.
+
+The encoding, the metric, and the loader are fixed and pinned by 145 tests.
 
 ## The 30-second mental model
 

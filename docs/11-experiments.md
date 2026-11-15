@@ -172,17 +172,77 @@ SYSTEMONE_EVAL_CHECKPOINT=bekko_tiny uv run python scripts/eval_s1mb.py
 Checkpoint goes to `artifacts/<name>/`; override with
 `SYSTEMONE_CHECKPOINT_DIR`.
 
+## First clean run (2026-11-15)
+
+The first run after the encoding fix, and the first number in this project that is
+comparable to the published table.
+
+```
+BEKKO_CASES=300 SYSTEMONE_EPOCHS=1   (query budget 64, 89,442 examples, 2,796 steps)
+```
+
+Raw accuracy moved as the diagnosis predicted, and only on `choice`:
+
+| metric | before fix | after fix |
+|---|---:|---:|
+| train `choice` | 0.418 | **0.462** |
+| test `choice` | 0.308 | **0.362** |
+| test `noul` | 0.698 | 0.677 |
+| test `score` | 0.526 | 0.511 |
+| overall | 0.534 | 0.539 |
+
+`choice` is the one kind the bug damaged, and it is the only one that improved.
+`noul` and `score` moved down slightly, which is expected noise from a fresh
+1-epoch run rather than a regression.
+
+**The adjusted number, which is the one that counts:**
+
+```
+noul    task score =  2.71
+choice  task score =  0.40
+score   task score =  0.00
+Task Avg          =  1.04     (published: laya 13.36, bekko-17m 27.57, jev 59.59)
+```
+
+Zero benchmarks were excluded, so this is the full 137.
+
+What that says:
+
+- **`score` is at exactly zero across all 21 benchmarks.** The model's expected
+  value is no better than always guessing the median. This is the clearest
+  remaining gap and it is not a capacity question — it is that the model has no
+  sense of scale at all.
+- **`choice` clears the baseline on 6 of 57 benchmarks**, by a few points each
+  (`contract_nli` 0.097, `email-selection` 0.092, the rest under 0.02). It is
+  learning something, not much.
+- **`noul` clears the baseline on 15 of 59 benchmarks.** Best absolute gains are
+  on `tracie` (0.120) and `argument_quality` (0.044).
+
+A Task Avg of 1.04 is far below even Laya's 13.36. That is the honest starting
+point, and it is now measurable — which it was not before.
+
 ## What the results imply for next steps
 
-1. **Retrain on the fixed encoding.** Every number above is from rows that lost
-   their candidates. Nothing else can be interpreted until this is redone.
-2. **Then measure with the adjusted metric.** `scripts/eval_s1mb.py` now produces
-   a Task Avg over 137 benchmarks with no silent drops, so the capacity question
-   becomes answerable.
+1. **Train longer.** This was 1 epoch on 300 cases/subset. The old "0.534" came
+   from 2 epochs on 1000/subset. Nothing here indicates convergence; `train_acc`
+   on `choice` was still climbing.
+2. **Fix `score`.** A flat zero across 21 benchmarks suggests the expected-value
+   head is not learning the scale, not that the task is hard. Worth checking
+   whether the level values reach the model at all and whether 1 epoch is simply
+   too few for 13,889 examples.
 3. **Then test capacity.** 1M → 4.2M is the supported next move; the
    17M/68M/400M bekko scaling (27.57 / 40.46 / 50.60 Task Avg) suggests headroom,
-   but "the 1M model is capacity-bound" is a hypothesis, not a finding.
+   but "the 1M model is capacity-bound" is still a hypothesis.
 4. **Distillation** is the only lever that adds information rather than
    reweighting what we have. Laya is Apache-2.0 and runnable.
+
+## Known gap: `ranking` decisions are dropped
+
+The bekko corpus contains a fourth decision type, `ranking`, which has
+`type: null`, no `criteria`, and its candidates in `documents`. The parser drops
+every one — `agnews` alone is 19,992 decisions, an entire subset. `S1MB` contains
+no `ranking` decisions, so scores are unaffected; this is training data left on the
+table. The drop warning now names it (`unsupported:ranking`) instead of printing
+an opaque `None`.
 
 Next: [Code map →](12-code-map.md)

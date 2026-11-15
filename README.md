@@ -68,25 +68,25 @@ Loading is capped per subset (`BEKKO_CASES`) because a full pass is ~262k steps.
 
 ## Measured
 
-Raw accuracy on the S1MB test split, 1M parameters, 8-candidate cap. Raw accuracy
-is not the leaderboard metric — see `docs/10-metrics.md` and run
-`scripts/eval_s1mb.py` for the baseline-adjusted Task Avg.
+The first clean run, after the encoding fix. Raw accuracy on the S1MB test split,
+1M parameters:
 
-| Training data | Examples | `noul` | `choice` | `score` | overall |
-|---|---:|---:|---:|---:|---:|
-| 20 S1MB configs (leaks test rows) | 2,446 | 0.659 | 0.222 | 0.176 | 0.417 |
-| all 106 S1MB configs (leaks test rows) | 26,264 | 0.721 | 0.323 | 0.508 | 0.551 |
-| bekko corpus, 300/subset | 89,442 | 0.701 | 0.335 | 0.510 | 0.541 |
-| bekko corpus, 1000/subset | 284,877 | 0.698 | 0.308 | 0.526 | 0.534 |
+| | `noul` | `choice` | `score` | overall |
+|---|---:|---:|---:|---:|
+| before the fix | 0.698 | 0.308 | 0.526 | 0.534 |
+| after the fix (1 epoch, 300/subset) | 0.677 | **0.362** | 0.511 | 0.539 |
 
-The first two rows trained on the benchmark's own test rows, so they are not
-comparable to published results.
+`choice` is the kind the bug damaged, and the only one that improved.
 
-These numbers predate a bug fix: queries used to be truncated from the front,
-which deleted the entire candidate in ~45% of S1MB rows and collapsed 27% of
-`choice` groups to a single identical encoding. Any rerun with the current code
-will differ. Compare against the trivial baselines (`noul` 0.715, `choice` 0.254,
-`score` 0.501) before treating `overall` as skill.
+Raw accuracy is not the leaderboard metric. The comparable number:
+
+```
+Task Avg = 1.04     (laya 13.36, bekko-17m 27.57, jev 59.59)
+```
+
+That is low, and it is the honest starting point. `score` is flat zero across all
+21 of its benchmarks. See `docs/10-metrics.md` and run
+`scripts/eval_s1mb.py` to reproduce.
 
 ## Artifacts
 

@@ -94,6 +94,20 @@ def _criterion_definitions(decision: dict) -> str:
     return "\n".join(parts)
 
 
+def _drop_reason(decision: dict) -> str:
+    """Name why a decision will not parse, for the drop warning.
+
+    `type` is null for `ranking` decisions, which this model has no head for.
+    Reporting those as `None` hides a whole subset's worth of data.
+    """
+    kind = decision.get("type")
+    if kind is None:
+        return f"unsupported:{decision.get('kind') or 'unknown'}"
+    if kind not in ("noul", "choice", "score"):
+        return f"unsupported:{kind}"
+    return kind
+
+
 def parse_decision(
     state: str,
     decision: dict,
@@ -240,7 +254,8 @@ def load_typed_decisions(
                     shuffle=shuffle_options,
                 )
                 if example is None:
-                    dropped[decision["type"]] = dropped.get(decision["type"], 0) + 1
+                    reason = _drop_reason(decision)
+                    dropped[reason] = dropped.get(reason, 0) + 1
                     continue
                 # namespace by config so case ids never merge across datasets
                 grouped.setdefault(f"{config}/{row['case_id']}", []).append(example)
