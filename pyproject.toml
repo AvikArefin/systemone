@@ -23,3 +23,12 @@ build-backend = "uv_build"
 dev = [
     "pytest>=9.2.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -m 'not slow'"
+filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "slow: needs the HuggingFace dataset cache",
+    "network: touches HuggingFace",
+]

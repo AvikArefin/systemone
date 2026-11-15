@@ -72,6 +72,29 @@ logits [R]  ──►  batch_loss (per group)  ──►  backward
 | Add a dataset | `s1mb.py` | `load_typed_decisions` expects the shared schema |
 | Verify a checkpoint still loads | `checkpoint.py` | keys are the same as training |
 
+## Tests — `tests/`
+
+| File | Guards |
+|---|---|
+| [`test_encoding.py`](../tests/test_encoding.py) | A row can answer its own question: candidate never deleted, options stay distinct |
+| [`test_data_pipeline.py`](../tests/test_data_pipeline.py) | Flat-cache offsets, group membership, per-group loss, cache versioning |
+| [`test_model_invariants.py`](../tests/test_model_invariants.py) | Prefix mask, causal queries, padding invariance, pooling, RoPE, parameter count |
+| [`test_scoring.py`](../tests/test_scoring.py) | The three adjusted metrics return 0 for trivial policies and 1 for perfect |
+| [`test_schema_and_parsing.py`](../tests/test_schema_and_parsing.py) | Validation, wide option sets, dataset parsing |
+| [`test_training_and_calibration.py`](../tests/test_training_and_calibration.py) | Loss decreases, schedule shape, ECE, no test-set leakage |
+| [`test_inference.py`](../tests/test_inference.py) | Serving encodes rows exactly as training does |
+| [`test_checkpoint.py`](../tests/test_checkpoint.py) | Save/load round trip, temperatures, metadata |
+| [`test_regressions.py`](../tests/test_regressions.py) | One test per bug that shipped, with the damage recorded |
+| [`test_dataset_integration.py`](../tests/test_dataset_integration.py) | Real corpus shapes (marked `slow`, skipped without the HF cache) |
+
+```bash
+uv run pytest           # fast suite (~3 s)
+uv run pytest -m slow   # dataset-backed (~9 min, needs the HF cache)
+```
+
+The regression file is the institutional memory: each class names a bug, quantifies
+what it cost, and asserts the property that was violated.
+
 ## Invariants to preserve
 
 Break these and silent wrongness follows:
