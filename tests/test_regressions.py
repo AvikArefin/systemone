@@ -230,8 +230,9 @@ class TestScoreExpectedValueUsedIndices:
 class TestTemperaturesLeaked:
     """BUG: temperatures were fitted on the eval split and reported there.
 
-    This reports calibration the model was optimised for. The fit now takes the
-    train split and the scripts pass `train_collected`.
+    The fix is correct but the effect is small: measured on two halves of S1MB,
+    ECE moved by 0.0002 on one half and 0.0156 on the other. The docs originally
+    overstated this as a serious error; they now quote the measurement.
     """
 
     def test_scripts_fit_on_train(self):
@@ -244,6 +245,44 @@ class TestTemperaturesLeaked:
                 f"{name} must fit temperatures on the train split"
             )
             assert "fit_temperatures(collected)" not in source
+
+
+class TestTemperatureFitIsNotIdentifiable:
+    """BUG: the temperature fit silently returned meaningless values.
+
+    On a near-chance model the NLL curve is flat past T~4, so the grid search
+    returns whichever point it happens to evaluate. The same checkpoint fitted on
+    two disjoint halves of S1MB gave choice T=4.69 and T=1.82. A confident model
+    also wants T below the grid floor. Both cases used to pass silently.
+    """
+
+    def test_flat_curve_is_reported(self, capsys):
+        import torch
+
+        from systemone.calibrate import fit_temperatures
+
+        fit_temperatures({"noul": [], "choice": [(torch.zeros(4), 0.0)] * 200, "score": []})
+        assert "not identifiable" in capsys.readouterr().out
+
+    def test_grid_edge_is_reported(self, capsys):
+        import torch
+
+        from systemone.calibrate import fit_temperatures
+
+        collected = {
+            "noul": [(torch.tensor([9.0]), 1.0)] * 50 + [(torch.tensor([-9.0]), 0.0)] * 50,
+            "choice": [],
+            "score": [],
+        }
+        fit_temperatures(collected)
+        assert "grid edge" in capsys.readouterr().out
+
+    def test_docs_quote_the_measured_magnitude(self):
+        from pathlib import Path
+
+        doc = (Path(__file__).resolve().parents[1] / "docs" / "08-calibration.md").read_text()
+        assert "0.0236" in doc, "the doc must quote the measurement, not just assert leakage"
+        assert "not identifiable" in doc or "not really fitted" in doc
 
 
 class TestStaleCacheReused:

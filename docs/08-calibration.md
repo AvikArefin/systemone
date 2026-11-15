@@ -59,18 +59,66 @@ ece_after = expected_calibration_error(test_collected, temperatures)
 
 - Collect logits for the **train** split, grouped by kind.
 - Search 40 values of `T` geometrically spaced from 0.25 to 10.0.
-- Pick the `T` minimising NLL (BCE for `noul`, cross-entropy otherwise).
+- Pick the `T` that gives the lowest loss (BCE for `noul`, cross-entropy otherwise).
 - Fit one `T` per kind, because the three heads behave differently.
 - Measure ECE on the held-out split, never on the one `T` was fitted to.
 
-Fitting on the evaluation split is leakage: it reports calibration the model was
-optimised for, and it is a one-parameter fit so the inflation is small but free.
-The training scripts previously did exactly that — `fit_temperatures(collected)`
-where `collected` came from `test_data`. They now pass `train_collected`, and
-`tests/test_regressions.py` asserts the scripts cannot regress.
+`calibrate.py` itself never sees a split — it fits whatever logits you pass it. The
+choice of split is the caller's. The training scripts used to pass the eval split,
+which means the reported ECE included a parameter tuned on that same data. They now
+pass the train split.
+
+**How much did that matter? Almost nothing.** Measured on two halves of S1MB:
+
+```
+half A: ECE with its own fit  0.0236      with the other half's fit  0.0238
+half B: ECE with its own fit  0.0602      with the other half's fit  0.0758
+```
+
+One free parameter over thousands of examples does not move much. The fix is still
+correct — it is free, and it stops the number from being self-referential — but it
+was not a large error, and this page overstated it when the fix landed.
+
+## The bigger problem: `T` is often not really fitted
+
+The temperature is only meaningful if the loss actually responds to it. On a model
+that is near chance, it doesn't:
+
+```
+choice, same model, two disjoint halves of S1MB:  T = 4.69  vs  T = 1.82
+noul, best grid point is the edge:                T = 10.0 (wants ~17.6 at high=1000)
+```
+
+Those two `choice` numbers cannot both be right. Look at why:
+
+```
+mean NLL   T=1.0 → 0.7697
+           T=10  → 0.6929
+           T=50  → 0.6929
+           T=1000→ 0.6931
+```
+
+Past `T≈4` the curve is flat to four decimals, so every grid point up there fits
+equally well and the search just returns whichever one it evaluates. That is not a
+fitted parameter, it is an artefact of the grid. `fit_temperatures` now warns in
+both cases: when the optimum sits on the grid edge, and when the loss barely moves
+across the whole grid (`is_identifiable`).
+
+Treat a stored temperature as meaningful only when no warning was printed. If one
+fires, the honest answer is "this model's confidence is not recoverable by a single
+scalar" — which is a statement about the model, not a bug to fix with a wider grid.
+
+Both edges mean the same thing in different directions:
+
+- **Hits `0.25`** (the floor): the model is *under*confident and wants sharpening
+  beyond the grid. A well-trained model on an easy task does this — `train_demo.py`
+  prints three such warnings at 100% accuracy, which is correct, not alarming.
+- **Hits `10.0`** (the ceiling): the model is *over*confident, and the near-flat
+  curve means no single `T` fixes it. This is the case to worry about.
 
 No gradient descent — a grid is enough for one parameter per kind, and it cannot
-diverge.
+diverge. But a grid cannot rescue a flat objective, so the warning matters more
+than the search.
 
 ## What we actually measured
 
@@ -82,10 +130,6 @@ ECE after    0.069
 T fitted     noul 1.66  choice 2.20  score 3.88
 ```
 
-All three temperatures are above 1, i.e. the model was overconfident on every
-task. The `score` head was the worst offender — its logits are the least
-constrained, and with only ~5k score examples it is the least trained.
-
 After the cleaner corpus run:
 
 ```
@@ -93,10 +137,17 @@ ECE before   0.122   →   after 0.090
 T            noul 1.82  choice 2.92  score 1.25
 ```
 
+**Read these with care.** Every one of these runs used the corrupted encoding, and
+given the flat-curve problem above, some of these temperatures are probably grid
+artefacts rather than real fits. The ECE improvement is real in direction — all
+three values are above 1, so the model was overconfident — but the exact numbers
+should be re-derived after a clean retrain.
+
 An important caveat, seen directly in these numbers: **temperature scaling fixes
 confidence, not knowledge.** A model that is wrong is still wrong after
 calibration. When an earlier run collapsed to chance on `choice`, calibration
-could not rescue it; only more data could.
+could not rescue it; only more data could. The flat loss curve above is the same
+fact in another form: if there is no signal, there is nothing to calibrate.
 
 ## Where temperatures live
 

@@ -47,11 +47,40 @@ def _nll(groups: list[tuple[Tensor, float]], temperature: float, kind: str) -> f
     return total
 
 
+def _nll_by_temperature(
+    groups: list[tuple[Tensor, float]], kind: str, grid: list[float]
+) -> list[float]:
+    return [_nll(groups, temperature, kind) for temperature in grid]
+
+
+def is_identifiable(
+    groups: list[tuple[Tensor, float]],
+    kind: str,
+    grid: list[float],
+    tolerance: float = 1e-3,
+) -> bool:
+    """Can this split actually pin down a temperature?
+
+    When a model is close to random, widening T barely moves the loss, so many
+    temperatures fit equally well and the "best" one is just whichever grid point
+    the search lands on. Reporting it as a fitted value would be false precision.
+    """
+    if len(grid) < 2:
+        return False
+    values = _nll_by_temperature(groups, kind, grid)
+    best = min(values)
+    # how much the loss changes across the whole grid, relative to its floor
+    if best <= 0.0:
+        return max(values) - best > tolerance
+    return (max(values) - best) / best > tolerance
+
+
 def fit_temperatures(
     collected: dict[str, list[tuple[Tensor, float]]],
     low: float = 0.25,
     high: float = 10.0,
     steps: int = 40,
+    warn: bool = True,
 ) -> dict[str, float]:
     grid = [math.exp(math.log(low) + i * (math.log(high) - math.log(low)) / (steps - 1)) for i in range(steps)]
     temperatures = {}
@@ -66,7 +95,30 @@ def fit_temperatures(
             if value < best_nll:
                 best_t, best_nll = temperature, value
         temperatures[kind] = best_t
+        if warn:
+            _warn_if_unidentifiable(groups, kind, grid, best_t, low, high)
     return temperatures
+
+
+def _warn_if_unidentifiable(
+    groups: list[tuple[Tensor, float]],
+    kind: str,
+    grid: list[float],
+    best_t: float,
+    low: float,
+    high: float,
+) -> None:
+    if best_t <= grid[0] * (1 + 1e-9) or best_t >= grid[-1] * (1 - 1e-9):
+        print(
+            f"warning: {kind} temperature hit the grid edge ({best_t:.3g}); "
+            f"the optimum is outside [{low:g}, {high:g}]"
+        )
+    if not is_identifiable(groups, kind, grid):
+        print(
+            f"warning: {kind} temperature is not identifiable on this split "
+            f"({len(groups)} groups); the loss barely changes with T, so "
+            f"{best_t:.3g} is not a meaningful fit"
+        )
 
 
 def _confidence(collected: dict[str, list[tuple[Tensor, float]]], temperatures: dict[str, float]) -> tuple[list[float], list[float]]:

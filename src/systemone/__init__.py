@@ -1,4 +1,4 @@
-from .calibrate import fit_temperatures
+from .calibrate import fit_temperatures, is_identifiable
 from .checkpoint import load_checkpoint, save_checkpoint
 from .config import ModelConfig
 from .data import EncodedSet, Example, load_jsonl, load_or_build
@@ -28,6 +28,7 @@ __all__ = [
     "build_report",
     "checkpoint_path",
     "fit_temperatures",
+    "is_identifiable",
     "load_checkpoint",
     "load_jevbench",
     "load_jsonl",

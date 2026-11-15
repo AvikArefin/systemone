@@ -14,7 +14,7 @@ Every file, what it does, and where to look when you want to change something.
 | [`bpe.py`](../src/systemone/bpe.py) | SentencePiece training and wrapper | `train_tokenizer`, `SentencePieceTokenizer` |
 | [`prompt.py`](../src/systemone/prompt.py) | Turns a question + candidate into token IDs | `choice_query`, `noul_query`, `score_query` |
 | [`train.py`](../src/systemone/train.py) | Training loop, schedule, evaluation | `train`, `evaluate`, `History` |
-| [`calibrate.py`](../src/systemone/calibrate.py) | Metrics, temperature fitting, ECE | `collect_logits`, `fit_temperatures`, `expected_calibration_error` |
+| [`calibrate.py`](../src/systemone/calibrate.py) | Metrics, temperature fitting, ECE | `collect_logits`, `fit_temperatures`, `is_identifiable`, `expected_calibration_error` |
 | [`scoring.py`](../src/systemone/scoring.py) | Baseline-adjusted S1MB scoring (Task Avg) | `build_report`, `probabilities_by_group`, `Decision` |
 | [`inference.py`](../src/systemone/inference.py) | One request in, typed answers out | `answer_request` |
 | [`checkpoint.py`](../src/systemone/checkpoint.py) | Save/load a named model directory | `save_checkpoint`, `load_checkpoint` |

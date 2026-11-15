@@ -17,6 +17,7 @@ from systemone.calibrate import (
     collect_logits,
     expected_calibration_error,
     fit_temperatures,
+    is_identifiable,
 )
 from systemone.data import EncodedSet
 from systemone.model import TinyJev
@@ -245,3 +246,67 @@ def test_ece_is_high_for_confident_wrong_answers():
 
 def test_ece_handles_an_empty_set():
     assert math.isnan(expected_calibration_error({"noul": [], "choice": [], "score": []}))
+
+
+class TestTemperatureIdentifiability:
+    """A temperature is only meaningful if the loss responds to it.
+
+    On a near-chance model the NLL curve is flat past T~4, so the search returns
+    whichever grid point it happens to evaluate. The same model fitted on two
+    halves of S1MB gave T=4.69 and T=1.82 -- one of those cannot be right.
+    """
+
+    def test_flat_logits_are_not_identifiable(self):
+        grid = _grid()
+        flat = [(torch.zeros(4), 0.0)] * 200
+        assert not is_identifiable(flat, "choice", grid)
+
+    def test_decisive_logits_are_identifiable(self):
+        grid = _grid()
+        sharp = [(torch.tensor([8.0, -8.0, 0.0, 0.0]), 0.0)] * 200
+        assert is_identifiable(sharp, "choice", grid)
+
+    def test_fit_warns_when_the_optimum_is_on_the_grid_edge(self, capsys):
+        # a very confident model wants T < 0.25, below the search range
+        collected = {
+            "noul": [(torch.tensor([9.0]), 1.0)] * 50 + [(torch.tensor([-9.0]), 0.0)] * 50,
+            "choice": [],
+            "score": [],
+        }
+        fit_temperatures(collected)
+        out = capsys.readouterr().out
+        assert "grid edge" in out
+
+    def test_fit_warns_when_the_curve_is_flat(self, capsys):
+        collected = {"noul": [], "choice": [(torch.zeros(4), 0.0)] * 200, "score": []}
+        fit_temperatures(collected)
+        out = capsys.readouterr().out
+        assert "not identifiable" in out
+
+    def test_no_warning_for_a_clean_fit(self, capsys):
+        # moderately confident and sometimes wrong: the optimum lands inside the
+        # grid and the loss responds to T, so no warning is appropriate
+        collected = {
+            "noul": [(torch.tensor([0.9]), 1.0)] * 60
+            + [(torch.tensor([0.9]), 0.0)] * 25
+            + [(torch.tensor([-0.9]), 0.0)] * 60
+            + [(torch.tensor([-0.9]), 1.0)] * 25,
+            "choice": [],
+            "score": [],
+        }
+        temperatures = fit_temperatures(collected)
+        out = capsys.readouterr().out
+        assert "warning" not in out, out
+        assert 0.25 < temperatures["noul"] < 10.0
+
+    def test_warnings_can_be_suppressed(self, capsys):
+        collected = {"noul": [], "choice": [(torch.zeros(4), 0.0)] * 200, "score": []}
+        fit_temperatures(collected, warn=False)
+        assert "warning" not in capsys.readouterr().out
+
+
+def _grid(low=0.25, high=10.0, steps=10):
+    return [
+        math.exp(math.log(low) + i * (math.log(high) - math.log(low)) / (steps - 1))
+        for i in range(steps)
+    ]
