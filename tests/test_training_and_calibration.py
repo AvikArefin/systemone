@@ -111,6 +111,33 @@ def test_history_records_one_lr_and_loss_per_step(tokenizer):
     assert len(history.lrs) == steps
 
 
+def test_gradient_accumulation_records_one_step_per_window(tokenizer):
+    """Accumulating chunks must not multiply the optimizer steps."""
+    cfg = _cfg()
+    data = EncodedSet.build(_dataset(count=16), tokenizer, cfg)
+    history = train(model := TinyJev(cfg), data, epochs=2, max_rows=24, grad_accum=3, lr=1e-3)
+    expected = 2 * math.ceil(len(data.batches(24)) / 3)
+    assert len(history.losses) == expected
+
+
+def test_checkpointing_and_bf16_still_train(tokenizer):
+    """Both are memory knobs; neither may break the forward/backward path."""
+    cfg = _cfg()
+    model = TinyJev(cfg)
+    data = EncodedSet.build(_learnable_dataset(count=40), tokenizer, cfg)
+    history = train(
+        model,
+        data,
+        epochs=20,
+        max_rows=24,
+        lr=3e-3,
+        device=torch.device("cpu"),
+        checkpoint=True,
+        bf16=True,
+    )
+    assert history.losses[-1] < history.losses[0]
+
+
 def test_warmup_starts_below_the_peak_and_cosine_decays(tokenizer):
     cfg = _cfg()
     model = TinyJev(cfg)

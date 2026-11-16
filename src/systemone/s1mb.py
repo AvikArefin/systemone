@@ -1,5 +1,6 @@
 import json
 import random
+from pathlib import Path
 
 from .data import Example
 from .schema import Choice, Noul, Score
@@ -208,9 +209,27 @@ BEKKO_REPO = "hotchpotch/bekko-system-one-dataset-v0"
 
 
 def all_configs(repo: str = S1MB_REPO) -> list[str]:
-    from datasets import get_dataset_config_names
+    """Config names for a dataset repo, falling back to the local cache.
 
-    return list(get_dataset_config_names(repo))
+    `get_dataset_config_names` needs the Hub. Offline it does not fail -- it
+    returns a single bogus `"default"` -- which is worse than failing, because a
+    caller then loads nothing and reports zero cases. The cache directories are
+    the real answer there.
+    """
+    from datasets import get_dataset_config_names
+    from datasets.config import HF_DATASETS_CACHE
+
+    try:
+        names = list(get_dataset_config_names(repo))
+    except Exception:
+        names = []
+    if names and names != ["default"]:
+        return names
+
+    root = Path(HF_DATASETS_CACHE) / repo.replace("/", "___")
+    if not root.is_dir():
+        return names
+    return sorted(path.name for path in root.iterdir() if path.is_dir())
 
 
 def load_typed_decisions(

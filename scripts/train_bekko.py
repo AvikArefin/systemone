@@ -12,22 +12,38 @@ from systemone.calibrate import (
     expected_calibration_error,
     fit_temperatures,
 )
-from systemone.s1mb import all_configs, collect_texts, load_bekko_train, load_s1mb
+from systemone.s1mb import (
+    BEKKO_REPO,
+    all_configs,
+    collect_texts,
+    load_bekko_train,
+    load_s1mb,
+)
 from systemone.train import evaluate, train
 
 SEED = 0
-NAME = "bekko_tiny"
-MAX_CASES = int(os.environ.get("BEKKO_CASES", "1000"))
+NAME = os.environ.get("SYSTEMONE_NAME", "bekko_tiny")
+MAX_CASES = int(os.environ.get("BEKKO_CASES", "1000"))  # per config, not total
+CONFIG_LIMIT = int(os.environ.get("BEKKO_CONFIG_LIMIT", "0"))  # 0 = every config
 EPOCHS = int(os.environ.get("SYSTEMONE_EPOCHS", "2"))
 MAX_ROWS = int(os.environ.get("SYSTEMONE_MAX_ROWS", "256"))
+STATE_TOKENS = int(os.environ.get("SYSTEMONE_STATE_TOKENS", "192"))
+QUERY_TOKENS = int(os.environ.get("SYSTEMONE_QUERY_TOKENS", "64"))
+CHECKPOINT = os.environ.get("SYSTEMONE_CHECKPOINT", "0") == "1"
+BF16 = os.environ.get("SYSTEMONE_BF16", "0") == "1"
+GRAD_ACCUM = int(os.environ.get("SYSTEMONE_GRAD_ACCUM", "1"))
 
 set_seed(SEED)
 device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
 
 started = time.perf_counter()
-train_grouped = load_bekko_train(max_cases=MAX_CASES, seed=SEED)
+configs = all_configs(BEKKO_REPO)
+if CONFIG_LIMIT:
+    configs = configs[:CONFIG_LIMIT]
+train_grouped = load_bekko_train(configs=configs, max_cases=MAX_CASES, seed=SEED)
 train_set = [example for case in train_grouped.values() for example in case]
-print(f"train load_s={time.perf_counter() - started:.1f} cases={len(train_grouped)} examples={len(train_set)}")
+print(f"train load_s={time.perf_counter() - started:.1f} configs={len(configs)} "
+      f"cases={len(train_grouped)} examples={len(train_set)}")
 
 test_grouped = load_s1mb(all_configs(), seed=SEED)
 test_set = [example for case in test_grouped.values() for example in case]
@@ -49,11 +65,13 @@ cfg = ModelConfig(
     n_heads=4,
     n_kv_heads=2,
     ffn_hidden=352,
-    max_state_tokens=192,
-    max_query_tokens=64,
+    max_state_tokens=STATE_TOKENS,
+    max_query_tokens=QUERY_TOKENS,
 )
 model = build_model(cfg, SEED)
 print(f"params={cfg.parameter_count():,} ({cfg.parameter_count() / 1e6:.2f}M)")
+print(f"budget={STATE_TOKENS}/{QUERY_TOKENS} rows={MAX_ROWS} accum={GRAD_ACCUM} "
+      f"checkpoint={CHECKPOINT} bf16={BF16}")
 
 train_data = load_or_build(directory / "bekko_train_cache.pt", train_set, tokenizer, cfg)
 test_data = load_or_build(directory / "s1mb_test_cache.pt", test_set, tokenizer, cfg)
@@ -76,6 +94,9 @@ history = train(
     warmup_fraction=0.05,
     eval_dataset=test_data,
     eval_every=1,
+    grad_accum=GRAD_ACCUM,
+    checkpoint=CHECKPOINT,
+    bf16=BF16,
 )
 print(f"train_s={time.perf_counter() - started:.1f}")
 print(f"steps={len(history.losses)}")

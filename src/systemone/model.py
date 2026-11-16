@@ -137,12 +137,16 @@ class TinyJev(nn.Module):
         query_ids: Tensor,
         query_mask: Tensor,
         group_ids: Tensor | None = None,
+        checkpoint: bool = False,
     ) -> Tensor:
         """Score every row of a batch.
 
         `state_ids` holds one state per group, not one per row; `group_ids` says
         which group each row belongs to. Pass `group_ids=None` when the caller
         already repeats the state per row.
+
+        `checkpoint` trades time for memory: each block recomputes its
+        activations during the backward pass instead of storing them.
         """
         rows = query_ids.shape[0]
         s_len = state_ids.shape[1]
@@ -170,15 +174,28 @@ class TinyJev(nn.Module):
         )
 
         for block in self.blocks:
-            state, query = block(
-                state,
-                query,
-                group_ids,
-                state_pos,
-                query_pos,
-                state_attn_mask,
-                query_attn_mask,
-            )
+            if checkpoint:
+                state, query = torch.utils.checkpoint.checkpoint(
+                    block,
+                    state,
+                    query,
+                    group_ids,
+                    state_pos,
+                    query_pos,
+                    state_attn_mask,
+                    query_attn_mask,
+                    use_reentrant=False,
+                )
+            else:
+                state, query = block(
+                    state,
+                    query,
+                    group_ids,
+                    state_pos,
+                    query_pos,
+                    state_attn_mask,
+                    query_attn_mask,
+                )
 
         query = self.norm(query)
         last = (query_mask.sum(dim=1).clamp(min=1) - 1).view(-1, 1, 1)

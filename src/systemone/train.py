@@ -1,5 +1,19 @@
+"""Training loop.
+
+Four memory knobs, all measured in [Experiments](../docs/11-experiments.md):
+
+- `max_rows` caps rows per chunk (a row is one candidate, not one example)
+- `grad_accum` sums gradients over several chunks before stepping -- we measured
+  this as throughput-free, so it is the cheapest way to buy headroom
+- `checkpoint` recomputes block activations in the backward pass: -46% memory,
+  +30% time
+- `bf16` runs the forward/backward in bfloat16, which saves no memory here but
+  removes the fp32 intermediate pressure that makes long sequences swap
+"""
+
 import math
 import random
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 
 import torch
@@ -30,11 +44,18 @@ def _chunks(dataset: EncodedSet, order: list[int], max_rows: int):
         yield batch
 
 
+def _precision(device: torch.device, bf16: bool):
+    if not bf16:
+        return nullcontext()
+    return torch.autocast(device.type, dtype=torch.bfloat16)
+
+
 def evaluate(
     model: TinyJev,
     dataset: EncodedSet,
     max_rows: int = 256,
     device: torch.device | None = None,
+    bf16: bool = False,
 ) -> float:
     device = device or next(model.parameters()).device
     model.to(device).eval()
@@ -43,9 +64,14 @@ def evaluate(
     with torch.no_grad():
         for chunk in dataset.batches(max_rows):
             batch = dataset.collate(chunk).to(device)
-            logits = model(
-                batch.state_ids, batch.state_mask, batch.query_ids, batch.query_mask, batch.group_ids
-            )
+            with _precision(device, bf16):
+                logits = model(
+                    batch.state_ids,
+                    batch.state_mask,
+                    batch.query_ids,
+                    batch.query_mask,
+                    batch.group_ids,
+                )
             total += batch_loss(logits, batch).item()
             count += 1
     return total / count if count else float("nan")
@@ -65,6 +91,9 @@ def train(
     min_lr_ratio: float = 0.05,
     eval_dataset: EncodedSet | None = None,
     eval_every: int = 1,
+    grad_accum: int = 1,
+    checkpoint: bool = False,
+    bf16: bool = False,
 ) -> History:
     device = device or next(model.parameters()).device
     model.to(device).train()
@@ -72,7 +101,7 @@ def train(
         model.parameters(), lr=lr, weight_decay=weight_decay
     )
 
-    steps_per_epoch = len(dataset.batches(max_rows))
+    steps_per_epoch = math.ceil(len(dataset.batches(max_rows)) / grad_accum)
     total_steps = max(1, steps_per_epoch * epochs)
     warmup_steps = int(total_steps * warmup_fraction)
 
@@ -91,22 +120,35 @@ def train(
 
     for epoch in range(epochs):
         rng.shuffle(order)
-        for chunk in _chunks(dataset, order, max_rows):
-            batch = dataset.collate(chunk).to(device)
-            logits = model(
-                batch.state_ids, batch.state_mask, batch.query_ids, batch.query_mask, batch.group_ids
-            )
-            loss = batch_loss(logits, batch)
+        chunks = list(_chunks(dataset, order, max_rows))
+        for start in range(0, len(chunks), grad_accum):
+            window = chunks[start : start + grad_accum]
             optimiser.zero_grad(set_to_none=True)
-            loss.backward()
+            running = 0.0
+            for chunk in window:
+                batch = dataset.collate(chunk).to(device)
+                with _precision(device, bf16):
+                    logits = model(
+                        batch.state_ids,
+                        batch.state_mask,
+                        batch.query_ids,
+                        batch.query_mask,
+                        batch.group_ids,
+                        checkpoint,
+                    )
+                    loss = batch_loss(logits, batch) / len(window)
+                loss.backward()
+                running += loss.item()
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             optimiser.step()
             scheduler.step()
-            history.losses.append(loss.item())
+            history.losses.append(running)
             history.lrs.append(scheduler.get_last_lr()[0])
             step += 1
         if eval_dataset is not None and (epoch + 1) % eval_every == 0:
-            history.evals.append((epoch + 1, evaluate(model, eval_dataset, max_rows, device)))
+            history.evals.append(
+                (epoch + 1, evaluate(model, eval_dataset, max_rows, device, bf16))
+            )
             model.to(device).train()
 
     model.eval()
