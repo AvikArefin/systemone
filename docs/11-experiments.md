@@ -248,6 +248,35 @@ for eval loss to move at all produces skill, on a subset small enough to run to
 convergence. Every budget and architecture result so far was measured against a
 model that had learned almost nothing, which is why they all looked the same.
 
+## The readout is fine; retrieval is what is missing
+
+Before blaming the tasks, a trivial one on the real pipeline: 34 real words, four
+options, exactly one of them appears in the document. Answer is always visible, no
+truncation, real tokenizer, 192/64.
+
+```
+where the answer sits      train acc   held-out acc   held-out loss
+fixed position                0.988        0.967       0.064
+anywhere in the document      0.557        0.290       1.39 -> 1.65
+```
+
+Both halves of the question answered at once:
+
+- The readout is **not** the problem. With the answer at a fixed spot it reaches
+  96.7% on held-out data, so the state is readable, the option comparison works,
+  and one scalar per row is enough.
+- Content-based retrieval is the problem. Move the same word to a random position
+  and held-out accuracy falls to 29% (chance 25%) while held-out loss climbs.
+  It cannot answer "does this option appear anywhere in this document".
+
+Every task in S1MB needs exactly that: find the option in the state, check whether
+the rubric is supported, check whether the claim follows. So this is the missing
+capability, and it is not a context-length, mask, memory, or capacity issue.
+
+Known cause: matching across positions is an induction-head-style circuit, and
+those form abruptly after far more optimisation than 96k rows. The open question
+is whether it forms at all at this size — see the long-run probe.
+
 ## One task, held out: capacity does not fix it
 
 The sharpest test available: one task, 80/20 split by case, everything filtered to
