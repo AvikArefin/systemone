@@ -142,6 +142,28 @@ benchmark honest and complete at the cost of the model seeing 27% of each state;
 filtering keeps every state whole at the cost of reporting on a biased third. The
 numbers above are the price of each.
 
+### Measured: fit-only does not flatter the model
+
+The obvious worry about reporting on the subset that fits is that it will look
+better than it is. A checkpoint was trained at 384/128 on fit-only data
+(`SYSTEMONE_FIT_ONLY=1`, 85.0% of the training decisions) and then scored both
+ways:
+
+```
+scope       decisions   noul   choice   score   Task Avg
+full           26,269    2.52     0.06    0.71       1.09
+fit-only       12,224    2.48     0.05    0.29       0.94
+```
+
+Fit-only came out *lower* — 0.94 against 1.09 — so the "survivors are the easy
+documents" worry did not show up in practice. Filtering removes the long
+documents, and on the short ones this model has no advantage to protect. `score`
+is the only kind that moves much (0.71 to 0.29), which is composition rather than
+difficulty.
+
+Both are still ~1%, which is the point worth keeping: the subset you report on
+does not rescue a model that has learned only the label marginals.
+
 ## Where the files live
 
 `datasets` caches outside the project:

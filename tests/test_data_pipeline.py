@@ -63,6 +63,36 @@ def test_one_huge_example_forms_its_own_batch(tokenizer, cfg):
             assert sum(counts[index] for index in batch) <= 8
 
 
+def test_fits_budget_is_strict_about_candidates(tokenizer, cfg):
+    """One over-long candidate disqualifies the decision, even if the state fits."""
+    from systemone.data import fits_budget
+
+    long_state = Example(
+        state="word " * (cfg.max_state_tokens + 5),
+        question=Noul(instructions="ok?"),
+        label=True,
+    )
+    assert not fits_budget(long_state, tokenizer, cfg)
+
+    short = Example(state="tiny", question=Noul(instructions="ok?"), label=True)
+    assert fits_budget(short, tokenizer, cfg)
+
+    wide = Example(
+        state="tiny",
+        question=Choice(
+            instructions="pick",
+            criteria=["yes", "word " * (cfg.max_query_tokens + 5)],
+        ),
+        label="yes",
+    )
+    assert not fits_budget(wide, tokenizer, cfg), "a long option kills the row set"
+    assert fits_budget(
+        Example(state="tiny", question=Choice(instructions="pick", criteria=["a", "b"]), label="a"),
+        tokenizer,
+        cfg,
+    )
+
+
 def test_offsets_are_monotonic_and_cover_the_flat_buffers(tokenizer, cfg):
     encoded = EncodedSet.build(_examples(), tokenizer, cfg)
     for offsets, data in (

@@ -335,6 +335,32 @@ class EncodedSet:
         )
 
 
+def fits_budget(example: Example, tokenizer: Tokenizer, cfg: ModelConfig) -> bool:
+    """Would this example reach the model whole, with nothing truncated?
+
+    Used to measure (and optionally to train on) only the part of a benchmark
+    that fits the budget. It is deliberately strict: a single over-long
+    candidate disqualifies the decision.
+    """
+    if len(tokenizer.encode(example.state)) > cfg.max_state_tokens:
+        return False
+    question = example.question
+    instructions = len(tokenizer.encode(question.instructions))
+    criteria = getattr(question, "criteria", None)
+    if not criteria:
+        return instructions <= cfg.max_query_tokens
+    return all(
+        instructions + 1 + len(tokenizer.encode(criterion)) <= cfg.max_query_tokens
+        for criterion in criteria
+    )
+
+
+def filter_to_budget(
+    examples: list[Example], tokenizer: Tokenizer, cfg: ModelConfig
+) -> list[Example]:
+    return [e for e in examples if fits_budget(e, tokenizer, cfg)]
+
+
 def load_or_build(
     path: str | Path,
     examples: list[Example],

@@ -4,6 +4,7 @@ import time
 import torch
 
 from systemone import ModelConfig, build_model, checkpoint_path, load_or_build, save_checkpoint, set_seed
+from systemone.data import filter_to_budget
 from systemone.bpe import SentencePieceTokenizer, train_tokenizer
 from systemone.calibrate import (
     accuracy,
@@ -33,6 +34,7 @@ CHECKPOINT = os.environ.get("SYSTEMONE_CHECKPOINT", "0") == "1"
 BF16 = os.environ.get("SYSTEMONE_BF16", "0") == "1"
 GRAD_ACCUM = int(os.environ.get("SYSTEMONE_GRAD_ACCUM", "1"))
 RESUME = os.environ.get("SYSTEMONE_RESUME", "0") == "1"
+FIT_ONLY = os.environ.get("SYSTEMONE_FIT_ONLY", "0") == "1"
 DEV = os.environ.get("SYSTEMONE_DEV", "0") == "1"
 
 if DEV:
@@ -99,8 +101,25 @@ print(f"params={cfg.parameter_count():,} ({cfg.parameter_count() / 1e6:.2f}M)")
 print(f"budget={STATE_TOKENS}/{QUERY_TOKENS} rows={MAX_ROWS} accum={GRAD_ACCUM} "
       f"checkpoint={CHECKPOINT} bf16={BF16}")
 
-train_data = load_or_build(directory / "bekko_train_cache.pt", train_set, tokenizer, cfg)
-test_data = load_or_build(directory / "s1mb_test_cache.pt", test_set, tokenizer, cfg)
+full_test_set = test_set
+if FIT_ONLY:
+    kept_train = filter_to_budget(train_set, tokenizer, cfg)
+    kept_test = filter_to_budget(test_set, tokenizer, cfg)
+    print(f"fit-only {len(kept_train)}/{len(train_set)} train examples "
+          f"({100*len(kept_train)/len(train_set):.1f}%), "
+          f"{len(kept_test)}/{len(test_set)} test ({100*len(kept_test)/len(test_set):.1f}%)")
+    train_set, test_set = kept_train, kept_test
+
+suffix = "_fit" if FIT_ONLY else ""
+train_data = load_or_build(directory / f"bekko_train_cache{suffix}.pt", train_set, tokenizer, cfg)
+test_data = load_or_build(directory / f"s1mb_test_cache{suffix}.pt", test_set, tokenizer, cfg)
+# The same model measured both ways: the fit-only subset is the number worth
+# reporting, the full split shows what truncation costs by comparison.
+full_test_data = (
+    load_or_build(directory / "s1mb_test_cache.pt", full_test_set, tokenizer, cfg)
+    if FIT_ONLY
+    else None
+)
 # Dev mode evaluates a fixed probe each epoch and the full split only at the end.
 probe_data = (
     load_or_build(directory / "probe_cache.pt", test_set[:PROBE], tokenizer, cfg)
@@ -147,7 +166,10 @@ print(f"eval_curve={[(e, round(v, 4)) for e, v in history.evals]}")
 print(f"loss first={history.losses[0]:.4f} last={history.losses[-1]:.4f}")
 
 after = evaluate(model, test_data, device=device)
-print(f"eval before={before:.4f} after={after:.4f}")
+scope = "fit-only" if FIT_ONLY else "full split"
+print(f"eval before={before:.4f} after={after:.4f} ({scope})")
+if full_test_data is not None:
+    print(f"same model on the full split (truncated)={evaluate(model, full_test_data, device=device):.4f}")
 
 train_collected = collect_logits(model, train_data, device=device)
 collected = collect_logits(model, test_data, device=device)
