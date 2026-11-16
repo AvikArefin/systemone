@@ -214,6 +214,13 @@
     margin-left: auto; border: 1px solid var(--line-strong); background: var(--paper);
     border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px;
   }
+  .explain {
+    padding: 12px 18px; background: var(--panel); border-bottom: 1px solid var(--line);
+    display: grid; gap: 6px; max-width: 88ch;
+  }
+  .explain p { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--ink-soft); }
+  .explain strong { color: var(--ink); font-weight: 620; }
+  .explain code { font: 12px var(--mono); background: var(--paper); padding: 1px 4px; border-radius: 3px; }
   .sheet-tools { display: flex; gap: 8px; align-items: center; padding: 10px 18px; flex-wrap: wrap; }
   .sheet-tools input {
     flex: 1; min-width: 160px; padding: 7px 9px; border: 1px solid var(--line-strong);
@@ -231,7 +238,10 @@
   table.vocab td.piece { font: 13px var(--mono); width: 220px; overflow-wrap: anywhere; }
   table.vocab td.text { color: var(--ink-soft); }
   table.vocab td.count { font: 11.5px var(--mono); text-align: right; width: 90px; }
-  table.vocab td.share { width: 130px; }
+  table.vocab td.share { width: 150px; }
+  td.share span { display: flex; align-items: center; gap: 6px; }
+  td.share .pct { font: 11px var(--mono); color: var(--ink-faint); width: 46px; text-align: right; }
+  td.share .bar { flex: 1; margin: 0; }
   tr.dead td { color: var(--drop); }
   tr.dead td.piece { color: var(--drop); }
   .legend { font-size: 11.5px; color: var(--ink-faint); padding: 0 18px 14px; }
@@ -284,12 +294,26 @@
       <span class="sub" id="vocab-sub">…</span>
       <button class="close" id="vocab-close">close</button>
     </div>
+    <div class="explain">
+      <p><strong>What this is.</strong> The model has one row per piece of text, and this
+      table is that list: all <span id="vocab-size">…</span> pieces the tokenizer knows,
+      each with its row number. A piece is a chunk a word gets chopped into, so
+      <code>the</code> is one piece while <code>scientific</code> may be two.</p>
+      <p><strong>What "times seen" counts.</strong> How often that piece appeared in the
+      words of <em>this config only</em> — <span id="vocab-scope">…</span>.
+      It is a sample: we tokenize <span id="vocab-sample">…</span> so the page opens
+      quickly, not every case in the dataset.</p>
+      <p><strong>What red means.</strong> The piece exists in the vocabulary but this
+      config never used it. A row the data never reaches is a row the model never
+      really learns, which is why a vocabulary can be far bigger than the text needs.</p>
+    </div>
     <div class="sheet-tools">
       <input id="vocab-filter" type="search" placeholder="filter pieces, e.g. a word or a single character…">
-      <button class="toggle" id="vocab-sort" aria-pressed="false">sort by count</button>
+      <button class="toggle" id="vocab-unused" aria-pressed="false">only never seen</button>
+      <button class="toggle" id="vocab-sort" aria-pressed="true">sort by count</button>
     </div>
     <div class="sheet-scroll"><table class="vocab"><thead><tr>
-      <th>id</th><th>piece</th><th>decodes to</th><th>uses</th><th>share</th>
+      <th>row</th><th>piece</th><th>reads as</th><th>times seen</th><th>% of tokens</th>
     </tr></thead><tbody id="vocab-rows"></tbody></table></div>
     <p class="legend" id="vocab-legend"></p>
   </div>
@@ -307,7 +331,7 @@ const state = {
   cases: [], total: 0, offset: 0, filter: "", configFilter: "",
   selected: null, detail: null, tab: "doc", tokens: true,
   stateBudget: 192, queryBudget: 64, loading: false,
-  vocab: null, vocabFilter: "", vocabSort: "count",
+  vocab: null, vocabFilter: "", vocabSort: "count", vocabUnused: false,
 };
 
 function report(message) {
@@ -353,6 +377,10 @@ async function boot() {
       || state.repos[0];
     await selectRepo(wanted, link.get("split"), link.get("config"));
     if (link.get("case")) await selectCase(link.get("case"));
+    if (link.get("unused")) {
+      state.vocabUnused = true;
+      el("vocab-unused").setAttribute("aria-pressed", "true");
+    }
     if (link.get("vocab")) await openVocab();
   } catch (error) { report(error.message); }
 }
@@ -576,6 +604,7 @@ async function openVocab() {
   if (!state.config) return;
   el("vocab-sheet").hidden = false;
   el("vocab-sub").textContent = `${state.config} · ${state.split}`;
+  el("vocab-scope").textContent = `config ${state.config}, split ${state.split}`;
   el("vocab-rows").innerHTML = '<tr><td colspan="5" class="legend">counting tokens…</td></tr>';
   try {
     state.vocab = await api("/api/vocab", {
@@ -588,32 +617,47 @@ async function openVocab() {
   }
 }
 
+function percent(part, whole) {
+  if (!whole || !part) return "0%";
+  const value = 100 * part / whole;
+  return value >= 1 ? `${value.toFixed(1)}%` : `${value.toFixed(2)}%`;
+}
+
 function renderVocab() {
   const vocab = state.vocab;
   if (!vocab) return;
   const filter = state.vocabFilter.toLowerCase();
   const byCount = state.vocabSort === "count";
   const items = vocab.items
-    .filter((item) => !filter
-      || item.piece.toLowerCase().includes(filter)
-      || item.text.toLowerCase().includes(filter))
+    .filter((item) => (!state.vocabUnused || item.count === 0)
+      && (!filter
+        || item.piece.toLowerCase().includes(filter)
+        || item.text.toLowerCase().includes(filter)))
     .sort((a, b) => byCount ? b.count - a.count || a.id - b.id : a.id - b.id);
   const peak = Math.max(1, ...items.map((item) => item.count));
   const piece = (text) => esc(text.replace(/\u2581/g, "·"));
-  el("vocab-sub").textContent =
-    `${state.config} · ${state.split} · ${num(vocab.used)} of ${num(vocab.size)} pieces used`;
-  el("vocab-rows").innerHTML = items.map((item) => `
+  el("vocab-sub").textContent = `${state.config} · ${state.split} · `
+    + `${num(vocab.used)} of ${num(vocab.size)} pieces used, ${num(vocab.unused)} never seen`;
+  el("vocab-size").textContent = num(vocab.size);
+  el("vocab-sample").textContent = `${num(vocab.scanned)} of ${num(vocab.cases)} cases`;
+  el("vocab-rows").innerHTML = items.length ? items.map((item) => `
     <tr class="${item.count === 0 ? "dead" : ""}">
       <td class="id">${item.id}</td>
       <td class="piece">${piece(item.piece)}</td>
       <td class="text">${esc(item.text.replace(/\u2581/g, " "))}</td>
       <td class="count">${num(item.count)}</td>
-      <td class="share"><div class="bar"><i style="width:${Math.round(100 * item.count / peak)}%"></i></div></td>
-    </tr>`).join("");
+      <td class="share"><span>
+        <span class="bar"><i style="width:${Math.round(100 * item.count / peak)}%"></i></span>
+        <span class="pct">${percent(item.count, vocab.total_tokens)}</span>
+      </span></td>
+    </tr>`).join("")
+    : '<tr><td colspan="5" class="legend">No piece matches that filter.</td></tr>';
   el("vocab-legend").textContent =
-    `${num(vocab.total_tokens)} tokens counted over ${num(vocab.scanned)} of ${num(vocab.cases)} cases `
-    + `(state, instructions and options). "·" marks a space. `
-    + `${num(vocab.size - vocab.used)} pieces never appear in this config.`;
+    `${num(items.length)} of ${num(vocab.size)} pieces shown. Percentages are each piece's `
+    + `share of the ${num(vocab.total_tokens)} tokens counted here, so the column adds up to 100%. `
+    + `"·" marks a space, and the bar is scaled to the most used piece. `
+    + `Counts cover state text, instructions and options for ${num(vocab.scanned)} cases — `
+    + `a sample of this config, not the whole dataset.`;
 }
 
 document.addEventListener("click", (event) => {
@@ -629,6 +673,12 @@ document.addEventListener("click", (event) => {
   }
   if (event.target.closest("#vocab-button")) { openVocab(); return; }
   if (event.target.closest("#vocab-close")) { el("vocab-sheet").hidden = true; return; }
+  if (event.target.closest("#vocab-unused")) {
+    const button = event.target.closest("#vocab-unused");
+    state.vocabUnused = !state.vocabUnused;
+    button.setAttribute("aria-pressed", state.vocabUnused);
+    renderVocab(); return;
+  }
   if (event.target.closest("#vocab-sort")) {
     const button = event.target.closest("#vocab-sort");
     state.vocabSort = state.vocabSort === "count" ? "id" : "count";

@@ -325,6 +325,8 @@ class Store:
         return {
             "size": self.tokenizer.vocab_size,
             "used": used,
+            "unused": self.tokenizer.vocab_size - used,
+            "source": getattr(self.tokenizer, "model_path", "tokenizer"),
             "items": items,
             "total_tokens": record["total"],
             "scanned": record["scanned"],
