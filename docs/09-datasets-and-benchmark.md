@@ -164,6 +164,30 @@ difficulty.
 Both are still ~1%, which is the point worth keeping: the subset you report on
 does not rescue a model that has learned only the label marginals.
 
+## The two repos, and which splits they have
+
+They are not the same kind of thing, and the split names hide it:
+
+```
+hotchpotch/s1mb-dataset              test only        100 cases per config
+hotchpotch/bekko-system-one-         train            thousands per config
+  dataset-v0                         validation       100 cases per config
+                                     test             100 cases per config
+```
+
+So the benchmark repo ships one split called `test`, because the whole repo is the
+benchmark. There is no train split to look for, and an evaluation run is always on
+`test`.
+
+`bekko` is the training repo, and its `train` split is clean: measured across four
+configs, **zero case ids are shared with the benchmark**. Its `validation` and
+`test` splits are the benchmark itself, 100 for 100 with `s1mb-dataset`. That means
+`split="validation"` or `split="test"` on bekko is a training run on the test set
+wearing a different name.
+
+`load_bekko_train` asks for `split="train"`, so nothing in this project has leaked
+that way.
+
 ## Where the files live
 
 `datasets` caches outside the project:
