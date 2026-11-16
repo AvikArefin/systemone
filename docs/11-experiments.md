@@ -220,6 +220,37 @@ and one case in the corpus has 2,416 candidates.
 Output is unchanged: `max_abs_diff=0.000e+00` against logits captured before the
 change, and the smoke-split Task Avgs match exactly.
 
+## Retraining at a bigger budget: first measurement
+
+The checkpoint was trained at 192/64, so every larger-budget number so far was
+out-of-distribution. With checkpointing and micro-batching in place, a retrain is
+affordable; this is the first A/B.
+
+Same 10 configs, same seed, same effective batch (256 rows — the 384 run uses 32
+rows x 8 accumulation), 2 epochs, 7,000 cases / 8,402 examples:
+
+```
+run                 train_s   eval loss before -> after   accuracy   noul  choice  score
+192/64, 256 rows      175       1.3921 -> 1.4679           0.417     0.567  0.271   0.306
+384/128, 32 rows      397       1.3914 -> 1.3888           0.423     0.587  0.262   0.303
+```
+
+**The knobs work; the experiment is too small to answer the question.** Training
+takes 2.3x longer, exactly as the per-row measurements predicted, and the 384 run
+fits comfortably with 32 rows x 8 accumulation. But the accuracy gap (0.417 vs
+0.423) is inside the noise band of a 8,402-example, 2-epoch run — and note that
+the 192 baseline's eval loss got *worse* after training, which is a sign the run
+is too short to say anything. The only directional hints are the 384 run's loss
+moving down instead of up, and +2 points on `noul`.
+
+Settling it needs the full corpus (182 configs, 898,334 rows, ~8 h per budget)
+and at least 2-3 seeds per arm. That is the cost of the answer, and it is worth
+stating plainly rather than reading a 0.006 difference as a result.
+
+**A caution about `BEKKO_CASES`:** it is applied **per config**, not in total.
+`BEKKO_CASES=1000` across 182 configs is ~182,000 cases / 898,334 rows, roughly a
+sixth of the corpus — not the "1,000 cases" it reads like.
+
 ## Causal query attention: tested, kept
 
 The query half reads left-to-right. That looked like an accident worth deleting —
