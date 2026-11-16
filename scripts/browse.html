@@ -34,8 +34,8 @@
   button, input, select { font: inherit; color: inherit; }
 
   header {
-    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-    padding: 10px 16px; border-bottom: 1px solid var(--line-strong);
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 9px 16px; border-bottom: 1px solid var(--line-strong);
     background: var(--panel);
   }
   .brand { font-weight: 640; letter-spacing: -0.01em; }
@@ -44,17 +44,26 @@
     font: 12px/1 var(--mono); color: var(--ink-soft); background: var(--paper);
     border: 1px solid var(--line); border-radius: 999px; padding: 5px 9px;
   }
+  select {
+    padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 6px;
+    background: var(--panel); font: 12.5px var(--mono);
+  }
   .budget { display: flex; align-items: center; gap: 6px; margin-left: auto; }
   .budget label { font-size: 12px; color: var(--ink-soft); }
   .budget input {
     width: 62px; padding: 5px 7px; border: 1px solid var(--line-strong);
     border-radius: 6px; background: var(--panel); font: 13px var(--mono);
   }
-  .budget button {
+  .budget button, .ghost {
     padding: 6px 11px; border: 1px solid var(--accent); border-radius: 6px;
     background: var(--accent); color: #fff; cursor: pointer;
   }
   .budget button:hover { background: #8e4514; }
+  .ghost {
+    background: var(--panel); color: var(--accent); border-color: var(--line-strong);
+  }
+  .ghost:hover { border-color: var(--accent); }
+  .ghost[disabled] { color: var(--ink-faint); border-color: var(--line); cursor: not-allowed; }
 
   main { flex: 1; display: grid; grid-template-columns: 250px 330px minmax(0, 1fr); min-height: 0; }
   .pane { overflow: auto; border-right: 1px solid var(--line); padding: 12px; min-height: 0; }
@@ -71,13 +80,14 @@
   }
   .config:hover { background: #efe9dd; color: var(--ink); }
   .config[aria-current="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
-  .config small { display: block; color: var(--ink-faint); font-size: 11px; }
 
-  .search {
-    width: 100%; padding: 7px 9px; margin-bottom: 10px; border: 1px solid var(--line-strong);
+  .search, .jump {
+    width: 100%; padding: 7px 9px; border: 1px solid var(--line-strong);
     border-radius: 6px; background: var(--panel);
   }
-  .search:focus, .budget input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .search { margin-bottom: 6px; }
+  .jump { margin-bottom: 10px; font: 12px var(--mono); }
+  .search:focus, .jump:focus, .budget input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
   .case {
     display: block; width: 100%; text-align: left; padding: 8px 9px; margin-bottom: 3px;
@@ -108,14 +118,13 @@
 
   .detail-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
   .detail-head h1 { margin: 0; font: 600 16px/1.3 var(--mono); overflow-wrap: anywhere; }
-  .detail-head .sub { font-size: 12px; color: var(--ink-faint); }
 
   .tabs { display: flex; gap: 4px; margin: 12px 0; border-bottom: 1px solid var(--line); }
   .tabs button {
     padding: 7px 11px; border: 0; border-bottom: 2px solid transparent; background: none;
     color: var(--ink-soft); cursor: pointer; font-size: 13px;
   }
-  .tabs button[aria-selected="true"] { color: var(--axent, var(--accent)); border-bottom-color: var(--accent); font-weight: 600; }
+  .tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
 
   .viewbar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
   .viewbar .note { font-size: 12px; color: var(--ink-faint); margin-left: auto; }
@@ -136,12 +145,11 @@
     font: 12px/1 var(--mono); padding: 3px 4px; border-radius: 4px;
     background: #f1ece2; color: var(--ink); white-space: pre;
   }
-  .tok.cut { background: var(--drop-soft); color: var(--drop); text-decoration: line-through; }
+  .tok.sep { background: var(--accent-soft); color: var(--accent); }
   .gap {
     font: 11px var(--mono); padding: 4px 8px; border-radius: 999px; margin: 0 4px;
     background: var(--drop-soft); color: var(--drop);
   }
-  .tok.sep { background: var(--accent-soft); color: var(--accent); }
 
   .decision {
     background: var(--panel); border: 1px solid var(--line); border-radius: 9px;
@@ -186,6 +194,47 @@
   .hint { font-size: 11.5px; color: var(--ink-faint); margin-top: 10px; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+  .sheet {
+    position: fixed; inset: 0; background: rgba(28, 26, 22, 0.32);
+    display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 20;
+  }
+  .sheet[hidden] { display: none; }
+  .sheet-body {
+    background: var(--paper); border-radius: 12px; width: min(920px, 100%);
+    max-height: 88vh; display: flex; flex-direction: column;
+    box-shadow: 0 24px 60px rgba(28, 26, 22, 0.28); overflow: hidden;
+  }
+  .sheet-head {
+    display: flex; align-items: center; gap: 12px; padding: 14px 18px;
+    border-bottom: 1px solid var(--line-strong); background: var(--panel);
+  }
+  .sheet-head h2 { margin: 0; font-size: 14px; letter-spacing: 0.02em; }
+  .sheet-head .sub { font: 12px var(--mono); color: var(--ink-faint); }
+  .sheet-head .close {
+    margin-left: auto; border: 1px solid var(--line-strong); background: var(--paper);
+    border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px;
+  }
+  .sheet-tools { display: flex; gap: 8px; align-items: center; padding: 10px 18px; flex-wrap: wrap; }
+  .sheet-tools input {
+    flex: 1; min-width: 160px; padding: 7px 9px; border: 1px solid var(--line-strong);
+    border-radius: 6px; background: var(--panel);
+  }
+  .sheet-scroll { overflow: auto; padding: 0 18px 18px; }
+  table.vocab { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.vocab th {
+    position: sticky; top: 0; background: var(--paper); text-align: left; font-weight: 600;
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-faint);
+    padding: 8px 8px; border-bottom: 1px solid var(--line-strong);
+  }
+  table.vocab td { padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  table.vocab td.id { font: 11.5px var(--mono); color: var(--ink-faint); width: 62px; }
+  table.vocab td.piece { font: 13px var(--mono); width: 220px; overflow-wrap: anywhere; }
+  table.vocab td.text { color: var(--ink-soft); }
+  table.vocab td.count { font: 11.5px var(--mono); text-align: right; width: 90px; }
+  table.vocab td.share { width: 130px; }
+  tr.dead td { color: var(--drop); }
+  tr.dead td.piece { color: var(--drop); }
+  .legend { font-size: 11.5px; color: var(--ink-faint); padding: 0 18px 14px; }
   @media (max-width: 900px) {
     main { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; }
     .pane { border-right: 0; border-bottom: 1px solid var(--line); max-height: 32vh; }
@@ -195,8 +244,10 @@
 <body>
 <header>
   <div class="brand">systemone <span>data browser</span></div>
-  <span class="chip" id="repo">…</span>
+  <select id="repo-select" aria-label="Dataset repository"></select>
+  <select id="split-select" aria-label="Split"></select>
   <span class="chip" id="tokinfo">…</span>
+  <button class="ghost" id="vocab-button">vocab</button>
   <form class="budget" id="budget-form">
     <label for="b-state">state</label>
     <input id="b-state" type="number" min="8" max="8192" step="8" value="192">
@@ -209,12 +260,14 @@
 <main>
   <section class="pane" id="rail" aria-label="Configurations">
     <h2>configs</h2>
+    <input class="search" id="config-filter" type="search" placeholder="filter configs…" aria-label="Filter configs">
     <div id="configs"><p class="empty">loading…</p></div>
   </section>
 
   <section class="pane" id="list" aria-label="Cases">
     <h2 id="list-title">cases</h2>
     <input class="search" id="search" type="search" placeholder="filter case ids…" aria-label="Filter case ids">
+    <input class="jump" id="jump" type="search" placeholder="jump to case id (enter)" aria-label="Jump to a case id">
     <div id="cases"><p class="empty">pick a config</p></div>
     <div id="list-foot"></div>
   </section>
@@ -224,6 +277,24 @@
   </section>
 </main>
 
+<div class="sheet" id="vocab-sheet" hidden>
+  <div class="sheet-body">
+    <div class="sheet-head">
+      <h2>vocabulary</h2>
+      <span class="sub" id="vocab-sub">…</span>
+      <button class="close" id="vocab-close">close</button>
+    </div>
+    <div class="sheet-tools">
+      <input id="vocab-filter" type="search" placeholder="filter pieces, e.g. a word or a single character…">
+      <button class="toggle" id="vocab-sort" aria-pressed="false">sort by count</button>
+    </div>
+    <div class="sheet-scroll"><table class="vocab"><thead><tr>
+      <th>id</th><th>piece</th><th>decodes to</th><th>uses</th><th>share</th>
+    </tr></thead><tbody id="vocab-rows"></tbody></table></div>
+    <p class="legend" id="vocab-legend"></p>
+  </div>
+</div>
+
 <script>
 const el = (id) => document.getElementById(id);
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => (
@@ -232,14 +303,15 @@ const num = (value) => value == null ? "—" : Number(value).toLocaleString("en-
 const plural = (count, one, many = `${one}s`) => `${num(count)} ${count === 1 ? one : many}`;
 
 const state = {
-  configs: [], config: null, cases: [], total: 0, offset: 0, filter: "",
+  repos: [], repo: null, split: null, configs: [], config: null,
+  cases: [], total: 0, offset: 0, filter: "", configFilter: "",
   selected: null, detail: null, tab: "doc", tokens: true,
   stateBudget: 192, queryBudget: 64, loading: false,
+  vocab: null, vocabFilter: "", vocabSort: "count",
 };
 
 function report(message) {
-  const node = el("detail");
-  node.innerHTML = `<p class="error">${esc(message)}</p>`;
+  el("detail").innerHTML = `<p class="error">${esc(message)}</p>`;
 }
 
 async function api(path, params = {}) {
@@ -252,6 +324,8 @@ async function api(path, params = {}) {
 
 function syncHash() {
   const params = new URLSearchParams();
+  if (state.repo) params.set("repo", state.repo.split("/").pop());
+  if (state.split) params.set("split", state.split);
   if (state.config) params.set("config", state.config);
   if (state.selected) params.set("case", state.selected);
   if (state.tab !== "doc") params.set("tab", state.tab);
@@ -261,61 +335,98 @@ function syncHash() {
 async function boot() {
   try {
     const meta = await api("/api/meta");
-    state.configs = meta.configs;
+    state.repos = meta.repos.filter((repo) => repo.configs.length);
     state.stateBudget = meta.budget.state;
     state.queryBudget = meta.budget.query;
     el("b-state").value = meta.budget.state;
     el("b-query").value = meta.budget.query;
-    el("repo").textContent = `${meta.repo.split("/").pop()} · ${meta.role}`;
-    el("repo").title = `${meta.repo} [${meta.split} split]`;
     el("tokinfo").textContent = meta.tokenizer === "none"
       ? "no tokenizer" : `vocab ${num(meta.tokenizer)}`;
-    renderConfigs();
+    el("vocab-button").disabled = meta.tokenizer === "none";
+    if (!state.repos.length) {
+      el("configs").innerHTML = '<p class="empty">No datasets in the local cache.</p>';
+      return;
+    }
     const link = new URLSearchParams(location.hash.slice(1));
-    const config = link.get("config");
     state.tab = link.get("tab") || "doc";
-    if (config && state.configs.includes(config)) {
-      await selectConfig(config);
-      const caseId = link.get("case");
-      if (caseId) await selectCase(caseId);
-    } else if (state.configs.length) await selectConfig(state.configs[0]);
-    else el("configs").innerHTML = '<p class="empty">No configs in the local cache.</p>';
+    const wanted = state.repos.find((repo) => repo.name.split("/").pop() === link.get("repo"))
+      || state.repos[0];
+    await selectRepo(wanted, link.get("split"), link.get("config"));
+    if (link.get("case")) await selectCase(link.get("case"));
+    if (link.get("vocab")) await openVocab();
   } catch (error) { report(error.message); }
 }
 
-function renderConfigs() {
-  const filter = state.filter.toLowerCase();
-  el("configs").innerHTML = state.configs
-    .filter((name) => !filter || name.toLowerCase().includes(filter))
-    .map((name) => `<button class="config" data-config="${esc(name)}"
-      aria-current="${name === state.config}">${esc(name)}</button>`).join("");
+function renderRepoSelect() {
+  el("repo-select").innerHTML = state.repos.map((repo) =>
+    `<option value="${esc(repo.name)}" ${repo.name === state.repo ? "selected" : ""}>
+      ${esc(repo.name.split("/").pop())} · ${esc(repo.role)}</option>`).join("");
 }
 
-async function selectConfig(name) {
+function currentConfig() {
+  return state.configs.find((config) => config.name === state.config);
+}
+
+function renderSplitSelect() {
+  const config = currentConfig();
+  const splits = config ? config.splits : [];
+  el("split-select").innerHTML = splits.map((split) =>
+    `<option value="${esc(split)}" ${split === state.split ? "selected" : ""}>${esc(split)}</option>`).join("");
+  el("split-select").disabled = splits.length < 2;
+}
+
+async function selectRepo(repo, split = null, config = null) {
+  state.repo = repo.name;
+  state.configs = repo.configs;
+  renderRepoSelect();
+  const wanted = config && repo.configs.some((item) => item.name === config) ? config : null;
+  await selectConfig(wanted || repo.configs[0].name, split, false);
+}
+
+async function selectConfig(name, split = null, sync = true) {
   state.config = name;
   state.cases = [];
   state.offset = 0;
   state.total = 0;
   state.selected = null;
   state.detail = null;
+  const config = currentConfig();
+  const splits = config ? config.splits : [];
+  state.split = split && splits.includes(split) ? split : splits[0];
   renderConfigs();
-  syncHash();
+  renderSplitSelect();
+  if (sync) syncHash();
   el("list-title").textContent = name;
-  el("detail").innerHTML = '<p class="empty">Pick a case on the left.</p>';
+  el("detail").innerHTML = '<p class="empty">Pick a case.</p>';
   await loadPage();
 }
 
-async function loadPage() {
-  if (!state.config || state.loading) return;
+function renderConfigs() {
+  const filter = state.configFilter.toLowerCase();
+  el("configs").innerHTML = state.configs
+    .filter((item) => !filter || item.name.toLowerCase().includes(filter))
+    .map((item) => `<button class="config" data-config="${esc(item.name)}"
+      aria-current="${item.name === state.config}">${esc(item.name)}</button>`).join("");
+}
+
+async function loadPage(jump = "") {
+  if (!state.config || !state.split || state.loading) return;
   state.loading = true;
   try {
     const page = await api("/api/cases", {
-      config: state.config, offset: state.offset, limit: 50, q: state.filter,
+      repo: state.repo, split: state.split, config: state.config,
+      offset: jump ? 0 : state.offset, limit: 50, q: state.filter, jump,
     });
-    state.cases = state.cases.concat(page.items);
+    state.cases = jump ? page.items : state.cases.concat(page.items);
     state.total = page.total;
-    state.offset += page.items.length;
+    state.offset = page.offset + page.items.length;
     renderCases();
+    if (jump && page.items.length) {
+      const match = page.items.find((item) => item.case_id === jump)
+        || page.items.find((item) => item.case_id.toLowerCase().includes(jump.toLowerCase()))
+        || page.items[0];
+      await selectCase(match.case_id);
+    }
   } catch (error) { report(error.message); }
   state.loading = false;
 }
@@ -349,7 +460,7 @@ async function selectCase(caseId) {
   el("detail").innerHTML = '<p class="empty">reading…</p>';
   try {
     state.detail = await api("/api/case", {
-      config: state.config, case: caseId,
+      repo: state.repo, split: state.split, config: state.config, case: caseId,
       state: state.stateBudget, query: state.queryBudget,
     });
     renderDetail();
@@ -358,9 +469,9 @@ async function selectCase(caseId) {
 
 function tokenView(tokens) {
   if (!tokens) return "";
-  const chip = (text, extra = "") => `<span class="tok ${extra}">${esc(text)}</span>`;
-  const head = tokens.head_tokens.map((text) => chip(text)).join("");
-  const tail = tokens.tail_tokens.map((text) => chip(text)).join("");
+  const chip = (text) => `<span class="tok">${esc(text)}</span>`;
+  const head = tokens.head_tokens.map(chip).join("");
+  const tail = tokens.tail_tokens.map(chip).join("");
   const gap = tokens.dropped
     ? `<span class="gap">⋯ ${num(tokens.dropped)} tokens dropped ⋯</span>` : "";
   return `<div class="tokens">${head}${gap}${tail}</div>`;
@@ -383,9 +494,9 @@ function renderDoc(detail) {
         ${num(tokens.total - tokens.dropped)} (budget ${num(tokens.budget)})
         ${tokens.dropped ? `· ${num(tokens.dropped)} dropped` : ""}</span>` : ""}
     </div>`;
-  const body = !tokens
+  const body = !tokens || !state.tokens
     ? `<div class="doc">${esc(detail.state)}</div>`
-    : state.tokens ? tokenView(tokens) : `<div class="doc">${esc(detail.state)}</div>`;
+    : tokenView(tokens);
   return controls + body;
 }
 
@@ -428,7 +539,6 @@ function renderDecisions(detail) {
         <span class="chip">${num(block.instruction_tokens)} instruction tokens</span>
       </header>
       <p class="q">${esc(block.instructions)}</p>
-      ${block.reason ? "" : ""}
       ${options}
       ${rows}
     </article>`;
@@ -450,7 +560,7 @@ function renderDetail() {
       ${fit}
     </div>
     <div class="sub" style="font:12px var(--mono);color:var(--ink-faint);margin-top:4px">
-      ${esc(detail.config)} · ${plural(detail.decisions.length, "decision")} ·
+      ${esc(detail.config)} · ${esc(detail.split)} · ${plural(detail.decisions.length, "decision")} ·
       ${num(detail.state_tokens ? detail.state_tokens.total : detail.state_chars)} state tokens
     </div>
     <div class="tabs" role="tablist">
@@ -459,7 +569,51 @@ function renderDetail() {
       <button role="tab" data-tab="raw" aria-selected="${tab === "raw"}">raw</button>
     </div>
     ${body}
-    <p class="hint">j / k next and previous case · 1 2 3 switch tabs · t toggle tokens · / filter</p>`;
+    <p class="hint">j / k next and previous case · 1 2 3 tabs · t tokens · / filter · v vocab</p>`;
+}
+
+async function openVocab() {
+  if (!state.config) return;
+  el("vocab-sheet").hidden = false;
+  el("vocab-sub").textContent = `${state.config} · ${state.split}`;
+  el("vocab-rows").innerHTML = '<tr><td colspan="5" class="legend">counting tokens…</td></tr>';
+  try {
+    state.vocab = await api("/api/vocab", {
+      repo: state.repo, split: state.split, config: state.config,
+    });
+    renderVocab();
+    el("vocab-filter").focus();
+  } catch (error) {
+    el("vocab-rows").innerHTML = `<tr><td colspan="5" class="legend">${esc(error.message)}</td></tr>`;
+  }
+}
+
+function renderVocab() {
+  const vocab = state.vocab;
+  if (!vocab) return;
+  const filter = state.vocabFilter.toLowerCase();
+  const byCount = state.vocabSort === "count";
+  const items = vocab.items
+    .filter((item) => !filter
+      || item.piece.toLowerCase().includes(filter)
+      || item.text.toLowerCase().includes(filter))
+    .sort((a, b) => byCount ? b.count - a.count || a.id - b.id : a.id - b.id);
+  const peak = Math.max(1, ...items.map((item) => item.count));
+  const piece = (text) => esc(text.replace(/\u2581/g, "·"));
+  el("vocab-sub").textContent =
+    `${state.config} · ${state.split} · ${num(vocab.used)} of ${num(vocab.size)} pieces used`;
+  el("vocab-rows").innerHTML = items.map((item) => `
+    <tr class="${item.count === 0 ? "dead" : ""}">
+      <td class="id">${item.id}</td>
+      <td class="piece">${piece(item.piece)}</td>
+      <td class="text">${esc(item.text.replace(/\u2581/g, " "))}</td>
+      <td class="count">${num(item.count)}</td>
+      <td class="share"><div class="bar"><i style="width:${Math.round(100 * item.count / peak)}%"></i></div></td>
+    </tr>`).join("");
+  el("vocab-legend").textContent =
+    `${num(vocab.total_tokens)} tokens counted over ${num(vocab.scanned)} of ${num(vocab.cases)} cases `
+    + `(state, instructions and options). "·" marks a space. `
+    + `${num(vocab.size - vocab.used)} pieces never appear in this config.`;
 }
 
 document.addEventListener("click", (event) => {
@@ -473,6 +627,30 @@ document.addEventListener("click", (event) => {
   if (event.target.closest("#toggle-tokens")) {
     state.tokens = !state.tokens; renderDetail(); return;
   }
+  if (event.target.closest("#vocab-button")) { openVocab(); return; }
+  if (event.target.closest("#vocab-close")) { el("vocab-sheet").hidden = true; return; }
+  if (event.target.closest("#vocab-sort")) {
+    const button = event.target.closest("#vocab-sort");
+    state.vocabSort = state.vocabSort === "count" ? "id" : "count";
+    button.setAttribute("aria-pressed", state.vocabSort === "count");
+    button.textContent = state.vocabSort === "count" ? "sort by id" : "sort by count";
+    renderVocab(); return;
+  }
+  if (event.target === el("vocab-sheet")) { el("vocab-sheet").hidden = true; return; }
+});
+
+el("repo-select").addEventListener("change", (event) => {
+  const repo = state.repos.find((item) => item.name === event.target.value);
+  if (repo) selectRepo(repo);
+});
+
+el("split-select").addEventListener("change", (event) => {
+  state.split = event.target.value;
+  state.cases = []; state.offset = 0; state.selected = null;
+  state.detail = null;
+  el("detail").innerHTML = '<p class="empty">Pick a case.</p>';
+  syncHash();
+  loadPage();
 });
 
 el("budget-form").addEventListener("submit", (event) => {
@@ -480,6 +658,17 @@ el("budget-form").addEventListener("submit", (event) => {
   state.stateBudget = Math.max(8, Number(el("b-state").value) || 192);
   state.queryBudget = Math.max(8, Number(el("b-query").value) || 64);
   if (state.selected) selectCase(state.selected);
+});
+
+el("jump").addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  const target = event.target.value.trim();
+  if (target) loadPage(target);
+});
+
+el("vocab-filter").addEventListener("input", (event) => {
+  state.vocabFilter = event.target.value.trim();
+  renderVocab();
 });
 
 let searchTimer;
@@ -492,8 +681,21 @@ el("search").addEventListener("input", (event) => {
   }, 180);
 });
 
+el("config-filter").addEventListener("input", (event) => {
+  state.configFilter = event.target.value.trim();
+  renderConfigs();
+});
+
 document.addEventListener("keydown", (event) => {
-  if (event.target.matches("input, textarea")) {
+  if (event.key === "Escape" && !el("vocab-sheet").hidden) {
+    el("vocab-sheet").hidden = true;
+    return;
+  }
+  if (event.key === "v" && !event.target.matches("input, textarea")) {
+    openVocab();
+    return;
+  }
+  if (event.target.matches("input, textarea, select")) {
     if (event.key === "Escape") event.target.blur();
     return;
   }
