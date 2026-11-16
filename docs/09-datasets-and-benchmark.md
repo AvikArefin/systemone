@@ -118,6 +118,30 @@ is quadratic attention, so it is a real trade-off rather than a free fix, but it
 should be measured before "capacity" is blamed. A 768-token state still only
 leaves 18.1% of state tokens behind, versus 72.7% at 192.
 
+## What survives if nothing is truncated
+
+The obvious alternative to raising the budget is refusing to truncate: only keep
+cases that fit. That is a much bigger cut than it sounds, because a case is lost
+if *any* of its candidates overflows.
+
+```
+budget      cases        decisions     rows (candidates)
+192/64      32.8%        35.6%         61.4%
+384/128     48.0%        47.2%         74.7%
+1024/384    87.0%        84.2%         92.9%
+1536/384    94.7%        90.7%         95.6%
+```
+
+At the deployed budget, dropping everything that overflows would leave **a third
+of the benchmark**, and it would not be a random third: the survivors are the
+short documents, which are the easy ones. By kind at 192/64 — noul 34.1% of
+decisions, choice 54.0%, **score 7.8%**.
+
+That is the argument for truncating rather than filtering. Truncation keeps the
+benchmark honest and complete at the cost of the model seeing 27% of each state;
+filtering keeps every state whole at the cost of reporting on a biased third. The
+numbers above are the price of each.
+
 ## Where the files live
 
 `datasets` caches outside the project:
