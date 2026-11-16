@@ -69,6 +69,12 @@ query   s2 [  ✓   ✓   ✓   ·   ·  ]
 - Nothing in the state can see the query. That is what makes the state encoding
   independent of which question is being asked.
 
+The causal rule on the query half is deliberate, and it was tested rather than
+assumed: making the query bidirectional (the last token sees the whole query
+either way, so it looked free) scores **0.96 against 1.04**. The intermediates
+matter even when the pooled token does not. See
+[Experiments](11-experiments.md#causal-query-attention-tested-kept).
+
 Padding is removed by `key_mask`, so padded positions can never be attended to.
 
 ### The mask is not a grid

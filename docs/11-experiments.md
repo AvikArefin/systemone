@@ -220,6 +220,62 @@ and one case in the corpus has 2,416 candidates.
 Output is unchanged: `max_abs_diff=0.000e+00` against logits captured before the
 change, and the smoke-split Task Avgs match exactly.
 
+## Causal query attention: tested, kept
+
+The query half reads left-to-right. That looked like an accident worth deleting —
+the model pools the *last* query token, and that token has seen the whole query
+whether or not the rule is causal. So the rule was removed and measured.
+
+```
+query attention      noul   choice   score   Task Avg
+causal (current)     2.71    0.40    0.00      1.04
+bidirectional        2.47    0.41    0.00      0.96
+```
+
+Bidirectional is ~8% worse. The reasoning that suggested it was free was wrong in
+an instructive way: the last token does see the whole query either way, but its
+vector is built *from the layer below*, and those intermediate tokens were
+computed causally. Change the rule and every intermediate changes, so the summary
+changes too. "The last token sees everything" is a statement about the mask, not
+about the information that reached it.
+
+Caveat: this checkpoint was trained with the causal rule, so the comparison asks
+it to work outside its training pattern. The honest reading is "flipping the rule
+without a retrain costs 8%", not "bidirectional attention is worse". A retrain
+could go either way. Kept causal anyway — the change bought tidiness, not speed
+or memory, and 8% is not a tidy-up price.
+
+## Memory levers: what actually buys headroom
+
+Measured on the deployed shape (4 layers, `d_model=128`), forward + backward +
+optimizer step, MPS, 16 GB machine:
+
+```
+budget     rows  bf16  checkpoint   ms/step    driver memory
+768/128     64   no    no            1329      7221 MB
+768/128     64   no    yes           1724      3858 MB
+768/128     64   yes   yes           1769      3867 MB
+1024/384    64   no    no           55806     14067 MB   <- swapping, not computing
+1024/384    64   no    yes           5877      8137 MB
+1024/384    32   no    yes           2808      3787 MB
+```
+
+**Gradient checkpointing is the lever.** Recompute activations in the backward
+pass instead of storing them: -46% memory for +30% time. At 1024/384 it is the
+difference between a 56-second step that is thrashing and a 6-second step that is
+computing.
+
+**bf16 halves no memory here** (7221 → 7222 MB) but it removes intermediate fp32
+pressure, which is why the 1024/384 step went from 56 s to 7 s.
+
+**Micro-batching is free.** At 768/128, 32 rows and 64 rows run at the same
+throughput (30 vs 31 rows/s), so halving the batch to buy memory costs nothing —
+accumulate gradients over the two halves.
+
+Together they put 1024/384 at 32 rows inside 3.8 GB, a third of what plain
+768/128 needed. The ceiling was never the token budget; it was the shape of the
+loop.
+
 ## Bucketing by length was measured and rejected
 
 The remaining waste is padding: 1.41× of attention work is tokens that exist only
