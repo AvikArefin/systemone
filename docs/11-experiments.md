@@ -274,8 +274,29 @@ the rubric is supported, check whether the claim follows. So this is the missing
 capability, and it is not a context-length, mask, memory, or capacity issue.
 
 Known cause: matching across positions is an induction-head-style circuit, and
-those form abruptly after far more optimisation than 96k rows. The open question
-is whether it forms at all at this size — see the long-run probe.
+those form after far more optimisation than 96k rows. The probe was whether it
+forms at all at this size. It does.
+
+### Same task, 150 epochs: the circuit appears
+
+```
+epochs   rows seen   train loss   held-out loss   held-out acc
+    15      96k         1.377          1.65            0.290
+   150    1.2M          0.000          0.139            0.968
+```
+
+Held-out loss by epoch: 0.588 (10), 0.330 (20), 0.235 (40), 0.147 (70), then flat
+at 0.139 through 150. 19.8 minutes on this machine.
+
+So the model is not incapable. At 15 epochs an identical run sits at chance; at 150
+it learns the task and transfers to held-out examples.
+
+This is the explanation for the whole session. The circuit needs on the order of
+**half a million rows** of one task before it settles, and every benchmark run so
+far has seen the equivalent of two epochs spread across 148 task families — about
+12k rows per task, or forty times short. The eval-loss curve at 2 epochs looks
+exactly like the ones recorded everywhere above: flat at ln(4), because nothing has
+formed yet. The task was never measured; the model was never trained.
 
 ## One task, held out: capacity does not fix it
 
