@@ -220,6 +220,34 @@ and one case in the corpus has 2,416 candidates.
 Output is unchanged: `max_abs_diff=0.000e+00` against logits captured before the
 change, and the smoke-split Task Avgs match exactly.
 
+## The real problem: the model only knows the label marginals
+
+The budget tables print percentages. Read that way, a Task Avg of `1.04` is
+**1.04% of headroom**, and no single kind is holding the average down:
+
+```
+noul 2.71%   choice 0.40%   score 0.00%
+```
+
+`score` is not broken — it is the floor of a floor. On score rows the model
+predicts the most common level for **87.6%** of rows against a **50.1%** gold
+marginal. Its logits vary (mean spread 2.06), and the level text is present in
+the query; it simply carries no signal beyond the marginal, and the adjusted
+metric maps marginal-following to exactly zero. The same is true of the other two
+kinds, less sharply.
+
+**The pipeline is not broken.** Given 240 real examples from one config (`arc`),
+60 epochs drives training loss to **0.0000** while eval loss climbs 1.39 → 9.11.
+It memorises readily. It is not being given enough to learn from at this scale:
+two epochs over 285k examples buys the marginals and nothing else, and eval loss
+does not improve — 1.3921 → 1.4679 in the A/B, and flat at ~1.39 in the scoped
+runs.
+
+So the next question is not a token budget. It is whether training long enough
+for eval loss to move at all produces skill, on a subset small enough to run to
+convergence. Every budget and architecture result so far was measured against a
+model that had learned almost nothing, which is why they all looked the same.
+
 ## Retraining at a bigger budget: first measurement
 
 The checkpoint was trained at 192/64, so every larger-budget number so far was
