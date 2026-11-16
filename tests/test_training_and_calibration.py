@@ -111,6 +111,30 @@ def test_history_records_one_lr_and_loss_per_step(tokenizer):
     assert len(history.lrs) == steps
 
 
+def test_resume_continues_instead_of_restarting(tokenizer):
+    """A resumed run keeps its losses and its schedule position."""
+    cfg = _cfg()
+    data = EncodedSet.build(_learnable_dataset(count=40), tokenizer, cfg)
+    model = TinyJev(cfg)
+    saved = {}
+
+    first = train(
+        model, data, epochs=2, max_rows=24, lr=1e-3, device=torch.device("cpu"),
+        on_epoch_end=lambda epoch, state: saved.update(state),
+    )
+    assert first.epoch == 2 and saved["epoch"] == 2
+    lr_at_two = first.lrs[-1]
+
+    second = train(
+        model, data, epochs=4, max_rows=24, lr=1e-3, device=torch.device("cpu"),
+        resume=saved,
+    )
+    assert second.epoch == 4
+    assert second.losses[: len(first.losses)] == first.losses
+    assert len(second.lrs) == len(first.lrs) + 2 * len(data.batches(24))
+    assert second.lrs[len(first.lrs) - 1] == lr_at_two
+
+
 def test_gradient_accumulation_records_one_step_per_window(tokenizer):
     """Accumulating chunks must not multiply the optimizer steps."""
     cfg = _cfg()

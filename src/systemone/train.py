@@ -13,6 +13,7 @@ Four memory knobs, all measured in [Experiments](../docs/11-experiments.md):
 
 import math
 import random
+from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 
@@ -27,6 +28,19 @@ class History:
     losses: list[float] = field(default_factory=list)
     lrs: list[float] = field(default_factory=list)
     evals: list[tuple[int, float]] = field(default_factory=list)
+    epoch: int = 0
+
+    def state(self, model, optimiser, scheduler) -> dict:
+        """Everything needed to continue this run later."""
+        return {
+            "epoch": self.epoch,
+            "losses": list(self.losses),
+            "lrs": list(self.lrs),
+            "evals": list(self.evals),
+            "model": model.state_dict(),
+            "optimiser": optimiser.state_dict(),
+            "scheduler": scheduler.state_dict(),
+        }
 
 
 def _chunks(dataset: EncodedSet, order: list[int], max_rows: int):
@@ -94,7 +108,17 @@ def train(
     grad_accum: int = 1,
     checkpoint: bool = False,
     bf16: bool = False,
+    resume: dict | None = None,
+    on_epoch_end: Callable[[int, dict], None] | None = None,
 ) -> History:
+    """Train, optionally continuing a previous run.
+
+    `epochs` is the target total, not a count of additional epochs: resuming at
+    epoch 2 with `epochs=6` runs epochs 3-6 and keeps one continuous schedule.
+
+    `resume` is the dict returned in `History.state()` and `on_epoch_end`
+    receives a fresh one after each epoch, so the caller decides where it lives.
+    """
     device = device or next(model.parameters()).device
     model.to(device).train()
     optimiser = torch.optim.AdamW(
@@ -117,8 +141,19 @@ def train(
     rng = random.Random(seed)
     history = History()
     step = 0
+    start_epoch = 0
 
-    for epoch in range(epochs):
+    if resume:
+        model.load_state_dict(resume["model"])
+        start_epoch = int(resume["epoch"])
+        history.epoch = start_epoch
+        history.losses = list(resume["losses"])
+        history.lrs = list(resume["lrs"])
+        history.evals = list(resume["evals"])
+        optimiser.load_state_dict(resume["optimiser"])
+        scheduler.load_state_dict(resume["scheduler"])
+
+    for epoch in range(start_epoch, epochs):
         rng.shuffle(order)
         chunks = list(_chunks(dataset, order, max_rows))
         for start in range(0, len(chunks), grad_accum):
@@ -150,6 +185,9 @@ def train(
                 (epoch + 1, evaluate(model, eval_dataset, max_rows, device, bf16))
             )
             model.to(device).train()
+        history.epoch = epoch + 1
+        if on_epoch_end is not None:
+            on_epoch_end(epoch + 1, history.state(model, optimiser, scheduler))
 
     model.eval()
     return history

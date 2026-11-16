@@ -94,6 +94,31 @@ From the measured runs on this machine (MPS):
 
 The model is small; the data is the wall clock.
 
+## Fast iteration
+
+A 2-epoch pass over the full corpus is roughly 3,700 s per epoch, which makes it
+useless as a loop. `SYSTEMONE_DEV=1` shrinks everything except the model:
+
+```
+configs 5          200 cases each       max_candidates 4
+rows 128           bf16 on              probe eval (2,000 test examples) each epoch
+name <name>_dev    full split evaluated once, at the end
+```
+
+The `<name>_dev` suffix matters: it keeps the dev run away from the real
+checkpoint and its caches. The tokenizer and both dataset caches are reused when
+present, and `SYSTEMONE_RESUME=1` continues from the last saved epoch — optimizer
+state and LR schedule included — instead of starting over.
+
+Measured: a 4-epoch dev run including dataset load and encoding is a few minutes;
+resuming it for four more epochs is 47.5 s of training.
+
+**Caveat, from the first dev runs.** At 685 training examples the model overfits
+inside two epochs — eval loss 1.288 → 1.296 → 1.381 → 1.460, and it keeps
+climbing. So the dev profile is a *pipeline check*: it tells you a change trains
+at all and produces a curve, not whether the change is better. Any conclusion
+drawn there has to be confirmed on a larger slice before it is believed.
+
 ## Known limitations of the current recipe
 
 These are deliberate, documented gaps rather than hidden bugs:

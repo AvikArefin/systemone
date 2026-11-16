@@ -4,7 +4,7 @@ import time
 import torch
 
 from systemone import ModelConfig, build_model, checkpoint_path, load_or_build, save_checkpoint, set_seed
-from systemone.bpe import train_tokenizer
+from systemone.bpe import SentencePieceTokenizer, train_tokenizer
 from systemone.calibrate import (
     accuracy,
     accuracy_by_kind,
@@ -32,6 +32,23 @@ QUERY_TOKENS = int(os.environ.get("SYSTEMONE_QUERY_TOKENS", "64"))
 CHECKPOINT = os.environ.get("SYSTEMONE_CHECKPOINT", "0") == "1"
 BF16 = os.environ.get("SYSTEMONE_BF16", "0") == "1"
 GRAD_ACCUM = int(os.environ.get("SYSTEMONE_GRAD_ACCUM", "1"))
+RESUME = os.environ.get("SYSTEMONE_RESUME", "0") == "1"
+DEV = os.environ.get("SYSTEMONE_DEV", "0") == "1"
+
+if DEV:
+    # Fast loop: fewer configs, fewer candidates per case, a probe eval each
+    # epoch, and the full split only at the end. Its own name so it cannot
+    # reuse the full run's tokenizer or data cache.
+    NAME = f"{NAME}_dev"
+    CONFIG_LIMIT = CONFIG_LIMIT or 5
+    MAX_CASES = min(MAX_CASES, 200)
+    MAX_ROWS = min(MAX_ROWS, 128)
+    BF16 = True
+    PROBE = 2000
+    MAX_CANDIDATES = 4
+else:
+    PROBE = 0
+    MAX_CANDIDATES = 8
 
 set_seed(SEED)
 device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
@@ -40,7 +57,9 @@ started = time.perf_counter()
 configs = all_configs(BEKKO_REPO)
 if CONFIG_LIMIT:
     configs = configs[:CONFIG_LIMIT]
-train_grouped = load_bekko_train(configs=configs, max_cases=MAX_CASES, seed=SEED)
+train_grouped = load_bekko_train(
+    configs=configs, max_candidates=MAX_CANDIDATES, max_cases=MAX_CASES, seed=SEED
+)
 train_set = [example for case in train_grouped.values() for example in case]
 print(f"train load_s={time.perf_counter() - started:.1f} configs={len(configs)} "
       f"cases={len(train_grouped)} examples={len(train_set)}")
@@ -55,8 +74,15 @@ print(f"train kinds={counts}")
 print(f"test examples={len(test_set)}")
 
 directory = checkpoint_path(NAME)
-tokenizer = train_tokenizer(collect_texts(train_grouped), directory / "tokenizer", vocab_size=2048)
-print(f"tokenizer vocab={tokenizer.vocab_size}")
+tokenizer_file = directory / "tokenizer.model"
+if tokenizer_file.exists():
+    # Reuse: retraining per run is the same work every time and changes the
+    # vocabulary the dataset cache is keyed on.
+    tokenizer = SentencePieceTokenizer(tokenizer_file)
+    print(f"tokenizer reused vocab={tokenizer.vocab_size}")
+else:
+    tokenizer = train_tokenizer(collect_texts(train_grouped), directory / "tokenizer", vocab_size=2048)
+    print(f"tokenizer vocab={tokenizer.vocab_size}")
 
 cfg = ModelConfig(
     vocab_size=tokenizer.vocab_size,
@@ -75,13 +101,28 @@ print(f"budget={STATE_TOKENS}/{QUERY_TOKENS} rows={MAX_ROWS} accum={GRAD_ACCUM} 
 
 train_data = load_or_build(directory / "bekko_train_cache.pt", train_set, tokenizer, cfg)
 test_data = load_or_build(directory / "s1mb_test_cache.pt", test_set, tokenizer, cfg)
+# Dev mode evaluates a fixed probe each epoch and the full split only at the end.
+probe_data = (
+    load_or_build(directory / "probe_cache.pt", test_set[:PROBE], tokenizer, cfg)
+    if PROBE
+    else test_data
+)
 print(
     f"cache train={len(train_data)} test={len(test_data)} "
     f"state_tokens={train_data.state_data.numel():,} "
     f"query_tokens={train_data.query_data.numel():,}"
 )
 
-before = evaluate(model, test_data, device=device)
+state_file = directory / "training_state.pt"
+resume = torch.load(state_file, weights_only=False) if (RESUME and state_file.exists()) else None
+if resume:
+    print(f"resuming from epoch {resume['epoch']} (target {EPOCHS})")
+
+def save_state(epoch, state):
+    torch.save(state, state_file)
+    print(f"  saved state at epoch {epoch}")
+
+before = evaluate(model, probe_data, device=device)
 started = time.perf_counter()
 history = train(
     model,
@@ -92,11 +133,13 @@ history = train(
     device=device,
     seed=SEED,
     warmup_fraction=0.05,
-    eval_dataset=test_data,
+    eval_dataset=probe_data,
     eval_every=1,
     grad_accum=GRAD_ACCUM,
     checkpoint=CHECKPOINT,
     bf16=BF16,
+    resume=resume,
+    on_epoch_end=save_state,
 )
 print(f"train_s={time.perf_counter() - started:.1f}")
 print(f"steps={len(history.losses)}")
