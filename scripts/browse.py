@@ -240,6 +240,7 @@ class Handler(BaseHTTPRequestHandler):
                     {
                         "repo": store.repo,
                         "split": store.split,
+                        "role": "benchmark" if store.repo == S1MB_REPO else "training",
                         "configs": all_configs(store.repo),
                         "budget": self.budgets,
                         "tokenizer": (

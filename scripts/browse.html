@@ -266,7 +266,8 @@ async function boot() {
     state.queryBudget = meta.budget.query;
     el("b-state").value = meta.budget.state;
     el("b-query").value = meta.budget.query;
-    el("repo").textContent = `${meta.repo.split("/").pop()} · ${meta.split}`;
+    el("repo").textContent = `${meta.repo.split("/").pop()} · ${meta.role}`;
+    el("repo").title = `${meta.repo} [${meta.split} split]`;
     el("tokinfo").textContent = meta.tokenizer === "none"
       ? "no tokenizer" : `vocab ${num(meta.tokenizer)}`;
     renderConfigs();
