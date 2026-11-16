@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>systemone · data browser</title>
+<style>
+  :root {
+    --paper: #f7f4ee;
+    --panel: #fffdf8;
+    --ink: #1c1a16;
+    --ink-soft: #5c574d;
+    --ink-faint: #8d8779;
+    --line: #e2dcd0;
+    --line-strong: #cec6b6;
+    --accent: #a8541a;
+    --accent-soft: #f6e6d6;
+    --gold: #946f00;
+    --gold-soft: #fbf1cf;
+    --fit: #2c6b4f;
+    --fit-soft: #e2f0e7;
+    --drop: #a33a2a;
+    --drop-soft: #f8e4df;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+    --serif: ui-serif, "Iowan Old Style", "Source Serif Text", Georgia, serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--paper); color: var(--ink); font: 15px/1.5 var(--sans);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  button, input, select { font: inherit; color: inherit; }
+
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 10px 16px; border-bottom: 1px solid var(--line-strong);
+    background: var(--panel);
+  }
+  .brand { font-weight: 640; letter-spacing: -0.01em; }
+  .brand span { color: var(--ink-faint); font-weight: 450; }
+  .chip {
+    font: 12px/1 var(--mono); color: var(--ink-soft); background: var(--paper);
+    border: 1px solid var(--line); border-radius: 999px; padding: 5px 9px;
+  }
+  .budget { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+  .budget label { font-size: 12px; color: var(--ink-soft); }
+  .budget input {
+    width: 62px; padding: 5px 7px; border: 1px solid var(--line-strong);
+    border-radius: 6px; background: var(--panel); font: 13px var(--mono);
+  }
+  .budget button {
+    padding: 6px 11px; border: 1px solid var(--accent); border-radius: 6px;
+    background: var(--accent); color: #fff; cursor: pointer;
+  }
+  .budget button:hover { background: #8e4514; }
+
+  main { flex: 1; display: grid; grid-template-columns: 250px 330px minmax(0, 1fr); min-height: 0; }
+  .pane { overflow: auto; border-right: 1px solid var(--line); padding: 12px; min-height: 0; }
+  .pane:last-child { border-right: 0; }
+  .pane h2 {
+    margin: 0 0 8px; font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--ink-faint); font-weight: 600;
+  }
+
+  .config {
+    display: block; width: 100%; text-align: left; padding: 6px 8px; margin-bottom: 2px;
+    border: 0; border-radius: 6px; background: none; cursor: pointer;
+    font: 12.5px/1.35 var(--mono); color: var(--ink-soft); overflow-wrap: anywhere;
+  }
+  .config:hover { background: #efe9dd; color: var(--ink); }
+  .config[aria-current="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .config small { display: block; color: var(--ink-faint); font-size: 11px; }
+
+  .search {
+    width: 100%; padding: 7px 9px; margin-bottom: 10px; border: 1px solid var(--line-strong);
+    border-radius: 6px; background: var(--panel);
+  }
+  .search:focus, .budget input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .case {
+    display: block; width: 100%; text-align: left; padding: 8px 9px; margin-bottom: 3px;
+    border: 1px solid transparent; border-radius: 7px; background: none; cursor: pointer;
+  }
+  .case:hover { background: #efe9dd; }
+  .case[aria-current="true"] { background: var(--panel); border-color: var(--line-strong); box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+  .case .id { display: block; font: 12px var(--mono); color: var(--ink); overflow-wrap: anywhere; }
+  .case .meta { display: flex; gap: 6px; align-items: center; margin-top: 3px; font-size: 11px; color: var(--ink-faint); }
+
+  .kind {
+    font: 10.5px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.04em;
+    padding: 3px 5px; border-radius: 4px; border: 1px solid var(--line-strong); color: var(--ink-soft);
+  }
+  .kind.noul { background: var(--fit-soft); border-color: #c2dccb; color: var(--fit); }
+  .kind.choice { background: var(--gold-soft); border-color: #e7d79a; color: var(--gold); }
+  .kind.score { background: #eee4f0; border-color: #d8c7dd; color: #6d4a78; }
+
+  .pill { font-size: 11px; padding: 2px 6px; border-radius: 999px; }
+  .pill.ok { background: var(--fit-soft); color: var(--fit); }
+  .pill.over { background: var(--drop-soft); color: var(--drop); }
+
+  .more {
+    width: 100%; margin-top: 8px; padding: 7px; border: 1px dashed var(--line-strong);
+    border-radius: 7px; background: none; color: var(--ink-soft); cursor: pointer;
+  }
+  .more:hover { border-color: var(--accent); color: var(--accent); }
+
+  .detail-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .detail-head h1 { margin: 0; font: 600 16px/1.3 var(--mono); overflow-wrap: anywhere; }
+  .detail-head .sub { font-size: 12px; color: var(--ink-faint); }
+
+  .tabs { display: flex; gap: 4px; margin: 12px 0; border-bottom: 1px solid var(--line); }
+  .tabs button {
+    padding: 7px 11px; border: 0; border-bottom: 2px solid transparent; background: none;
+    color: var(--ink-soft); cursor: pointer; font-size: 13px;
+  }
+  .tabs button[aria-selected="true"] { color: var(--axent, var(--accent)); border-bottom-color: var(--accent); font-weight: 600; }
+
+  .viewbar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .viewbar .note { font-size: 12px; color: var(--ink-faint); margin-left: auto; }
+  .toggle {
+    border: 1px solid var(--line-strong); background: var(--panel); border-radius: 6px;
+    padding: 4px 9px; font-size: 12px; cursor: pointer; color: var(--ink-soft);
+  }
+  .toggle[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+  .doc {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 9px;
+    padding: 14px 16px; font: 15px/1.7 var(--serif); max-width: 74ch; white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .tokens { display: flex; flex-wrap: wrap; gap: 3px; align-items: center;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 12px; }
+  .tok {
+    font: 12px/1 var(--mono); padding: 3px 4px; border-radius: 4px;
+    background: #f1ece2; color: var(--ink); white-space: pre;
+  }
+  .tok.cut { background: var(--drop-soft); color: var(--drop); text-decoration: line-through; }
+  .gap {
+    font: 11px var(--mono); padding: 4px 8px; border-radius: 999px; margin: 0 4px;
+    background: var(--drop-soft); color: var(--drop);
+  }
+  .tok.sep { background: var(--accent-soft); color: var(--accent); }
+
+  .decision {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 9px;
+    padding: 14px 16px; margin-bottom: 12px;
+  }
+  .decision header { padding: 0; border: 0; background: none; display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .decision .q { font: 15px/1.6 var(--serif); white-space: pre-wrap; margin: 0 0 10px; }
+  .opt {
+    display: grid; grid-template-columns: 22px minmax(0, 1fr) 92px; gap: 10px;
+    align-items: start; padding: 8px 10px; border-radius: 7px; margin-bottom: 4px;
+    border: 1px solid transparent;
+  }
+  .opt.gold { background: var(--gold-soft); border-color: #e7d79a; }
+  .answer {
+    display: inline-block; padding: 6px 12px; border-radius: 7px; font-size: 13.5px;
+    border: 1px solid var(--line); color: var(--ink-soft); margin-bottom: 6px;
+  }
+  .answer.gold { background: var(--gold-soft); border-color: #e7d79a; color: var(--ink); }
+  .answer .name { color: var(--ink-faint); font-size: 12px; }
+  .opt .idx { font: 11px var(--mono); color: var(--ink-faint); padding-top: 3px; }
+  .opt .text { font: 13.5px/1.5 var(--sans); overflow-wrap: anywhere; }
+  .opt .text .name { color: var(--ink-soft); }
+  .bar { height: 5px; border-radius: 3px; background: #ece6da; overflow: hidden; margin-top: 5px; }
+  .bar i { display: block; height: 100%; background: var(--gold); }
+  .prob { font: 11px var(--mono); color: var(--ink-faint); text-align: right; padding-top: 2px; }
+
+  details.query { margin-top: 6px; }
+  details.query summary {
+    font: 11px var(--mono); color: var(--ink-soft); cursor: pointer; list-style: none;
+  }
+  details.query summary::-webkit-details-marker { display: none; }
+  details.query summary::before { content: "▸ "; color: var(--ink-faint); }
+  details.query[open] summary::before { content: "▾ "; }
+  details.query .tokens { margin-top: 6px; padding: 8px; }
+
+  pre.raw {
+    background: #2b2822; color: #efe9dd; border-radius: 9px; padding: 14px;
+    font: 12px/1.6 var(--mono); overflow: auto; max-height: 70vh;
+  }
+  .empty { color: var(--ink-faint); font-size: 13px; padding: 24px 4px; }
+  .error { background: var(--drop-soft); color: var(--drop); border-radius: 7px; padding: 10px 12px; font-size: 13px; }
+  .hint { font-size: 11.5px; color: var(--ink-faint); margin-top: 10px; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; }
+    .pane { border-right: 0; border-bottom: 1px solid var(--line); max-height: 32vh; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">systemone <span>data browser</span></div>
+  <span class="chip" id="repo">…</span>
+  <span class="chip" id="tokinfo">…</span>
+  <form class="budget" id="budget-form">
+    <label for="b-state">state</label>
+    <input id="b-state" type="number" min="8" max="8192" step="8" value="192">
+    <label for="b-query">query</label>
+    <input id="b-query" type="number" min="8" max="1024" step="8" value="64">
+    <button type="submit">apply</button>
+  </form>
+</header>
+
+<main>
+  <section class="pane" id="rail" aria-label="Configurations">
+    <h2>configs</h2>
+    <div id="configs"><p class="empty">loading…</p></div>
+  </section>
+
+  <section class="pane" id="list" aria-label="Cases">
+    <h2 id="list-title">cases</h2>
+    <input class="search" id="search" type="search" placeholder="filter case ids…" aria-label="Filter case ids">
+    <div id="cases"><p class="empty">pick a config</p></div>
+    <div id="list-foot"></div>
+  </section>
+
+  <section class="pane" id="detail" aria-label="Case detail">
+    <p class="empty">Pick a case to inspect its document, decisions, and what the model actually sees.</p>
+  </section>
+</main>
+
+<script>
+const el = (id) => document.getElementById(id);
+const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => (
+  {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const num = (value) => value == null ? "—" : Number(value).toLocaleString("en-US");
+const plural = (count, one, many = `${one}s`) => `${num(count)} ${count === 1 ? one : many}`;
+
+const state = {
+  configs: [], config: null, cases: [], total: 0, offset: 0, filter: "",
+  selected: null, detail: null, tab: "doc", tokens: true,
+  stateBudget: 192, queryBudget: 64, loading: false,
+};
+
+function report(message) {
+  const node = el("detail");
+  node.innerHTML = `<p class="error">${esc(message)}</p>`;
+}
+
+async function api(path, params = {}) {
+  const query = new URLSearchParams(params).toString();
+  const response = await fetch(`${path}${query ? `?${query}` : ""}`);
+  const data = await response.json();
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
+function syncHash() {
+  const params = new URLSearchParams();
+  if (state.config) params.set("config", state.config);
+  if (state.selected) params.set("case", state.selected);
+  if (state.tab !== "doc") params.set("tab", state.tab);
+  history.replaceState(null, "", `#${params.toString()}`);
+}
+
+async function boot() {
+  try {
+    const meta = await api("/api/meta");
+    state.configs = meta.configs;
+    state.stateBudget = meta.budget.state;
+    state.queryBudget = meta.budget.query;
+    el("b-state").value = meta.budget.state;
+    el("b-query").value = meta.budget.query;
+    el("repo").textContent = `${meta.repo.split("/").pop()} · ${meta.split}`;
+    el("tokinfo").textContent = meta.tokenizer === "none"
+      ? "no tokenizer" : `vocab ${num(meta.tokenizer)}`;
+    renderConfigs();
+    const link = new URLSearchParams(location.hash.slice(1));
+    const config = link.get("config");
+    state.tab = link.get("tab") || "doc";
+    if (config && state.configs.includes(config)) {
+      await selectConfig(config);
+      const caseId = link.get("case");
+      if (caseId) await selectCase(caseId);
+    } else if (state.configs.length) await selectConfig(state.configs[0]);
+    else el("configs").innerHTML = '<p class="empty">No configs in the local cache.</p>';
+  } catch (error) { report(error.message); }
+}
+
+function renderConfigs() {
+  const filter = state.filter.toLowerCase();
+  el("configs").innerHTML = state.configs
+    .filter((name) => !filter || name.toLowerCase().includes(filter))
+    .map((name) => `<button class="config" data-config="${esc(name)}"
+      aria-current="${name === state.config}">${esc(name)}</button>`).join("");
+}
+
+async function selectConfig(name) {
+  state.config = name;
+  state.cases = [];
+  state.offset = 0;
+  state.total = 0;
+  state.selected = null;
+  state.detail = null;
+  renderConfigs();
+  syncHash();
+  el("list-title").textContent = name;
+  el("detail").innerHTML = '<p class="empty">Pick a case on the left.</p>';
+  await loadPage();
+}
+
+async function loadPage() {
+  if (!state.config || state.loading) return;
+  state.loading = true;
+  try {
+    const page = await api("/api/cases", {
+      config: state.config, offset: state.offset, limit: 50, q: state.filter,
+    });
+    state.cases = state.cases.concat(page.items);
+    state.total = page.total;
+    state.offset += page.items.length;
+    renderCases();
+  } catch (error) { report(error.message); }
+  state.loading = false;
+}
+
+function kinds(item) {
+  return Object.entries(item.kinds || {})
+    .map(([kind, count]) => `<span class="kind ${esc(kind)}">${esc(kind)} ${count}</span>`).join("");
+}
+
+function renderCases() {
+  if (!state.cases.length) {
+    el("cases").innerHTML = '<p class="empty">No cases match.</p>';
+    el("list-foot").innerHTML = "";
+    return;
+  }
+  el("cases").innerHTML = state.cases.map((item) => `
+    <button class="case" data-case="${esc(item.case_id)}" aria-current="${item.case_id === state.selected}">
+      <span class="id">${esc(item.case_id)}</span>
+      <span class="meta">${kinds(item)}<span>${plural(item.decisions, "decision")}</span>
+      <span>${num(item.state_chars)} chars</span></span>
+    </button>`).join("");
+  el("list-foot").innerHTML = state.cases.length < state.total
+    ? `<button class="more" id="more">Load 50 more · ${num(state.cases.length)} of ${num(state.total)}</button>`
+    : `<p class="hint">${num(state.total)} cases${state.filter ? " matching" : ""}</p>`;
+}
+
+async function selectCase(caseId) {
+  state.selected = caseId;
+  renderCases();
+  syncHash();
+  el("detail").innerHTML = '<p class="empty">reading…</p>';
+  try {
+    state.detail = await api("/api/case", {
+      config: state.config, case: caseId,
+      state: state.stateBudget, query: state.queryBudget,
+    });
+    renderDetail();
+  } catch (error) { report(error.message); }
+}
+
+function tokenView(tokens) {
+  if (!tokens) return "";
+  const chip = (text, extra = "") => `<span class="tok ${extra}">${esc(text)}</span>`;
+  const head = tokens.head_tokens.map((text) => chip(text)).join("");
+  const tail = tokens.tail_tokens.map((text) => chip(text)).join("");
+  const gap = tokens.dropped
+    ? `<span class="gap">⋯ ${num(tokens.dropped)} tokens dropped ⋯</span>` : "";
+  return `<div class="tokens">${head}${gap}${tail}</div>`;
+}
+
+function fitPill(block) {
+  return block.fits
+    ? '<span class="pill ok">fits</span>'
+    : '<span class="pill over">truncated</span>';
+}
+
+function renderDoc(detail) {
+  const tokens = detail.state_tokens;
+  const controls = `
+    <div class="viewbar">
+      <button class="toggle" id="toggle-tokens" aria-pressed="${state.tokens}">
+        ${state.tokens ? "show text" : "show tokens"}
+      </button>
+      ${tokens ? `<span class="note">${num(tokens.total)} tokens · model sees
+        ${num(tokens.total - tokens.dropped)} (budget ${num(tokens.budget)})
+        ${tokens.dropped ? `· ${num(tokens.dropped)} dropped` : ""}</span>` : ""}
+    </div>`;
+  const body = !tokens
+    ? `<div class="doc">${esc(detail.state)}</div>`
+    : state.tokens ? tokenView(tokens) : `<div class="doc">${esc(detail.state)}</div>`;
+  return controls + body;
+}
+
+function renderDecisions(detail) {
+  if (!detail.decisions.length) return '<p class="empty">This case has no decisions.</p>';
+  return detail.decisions.map((block) => {
+    if (block.reason) {
+      return `<article class="decision">
+        <header><span class="kind">${esc(block.kind)}</span>
+        <span class="pill over">${esc(block.reason)}</span></header></article>`;
+    }
+    const options = block.kind === "noul"
+      ? `<div class="answer ${block.rows[0].gold ? "gold" : ""}">
+           label <strong>${block.rows[0].gold}</strong>
+           ${block.distribution && block.distribution.length
+             ? `<span class="name">· gold probability ${Number(block.distribution[0]).toFixed(3)}</span>` : ""}
+         </div>`
+      : block.options.map((option) => `
+        <div class="opt ${option.gold ? "gold" : ""}">
+          <span class="idx">${option.index + 1}</span>
+          <div class="text">
+            ${esc(option.text)}
+            ${option.probability != null ? `<div class="bar"><i style="width:${Math.round(option.probability * 100)}%"></i></div>` : ""}
+          </div>
+          <span class="prob">${option.probability != null ? Number(option.probability).toFixed(3) : ""}</span>
+        </div>`).join("");
+
+    const rows = (block.kind === "noul" ? block.rows : block.options)
+      .filter((row) => row.query).map((row, index) => `
+        <details class="query"><summary>
+          ${block.kind === "noul" ? "row" : `option ${index + 1}`}
+          · query ${num(row.query.total - row.query.dropped)}/${num(row.query.total)} tokens
+          ${row.query.dropped ? `<span class="pill over">cut ${num(row.query.dropped)}</span>` : ""}
+        </summary>${tokenView(row.query)}</details>`).join("");
+
+    return `<article class="decision">
+      <header>
+        <span class="kind ${esc(block.kind)}">${esc(block.kind)}</span>
+        ${fitPill(block)}
+        <span class="chip">${num(block.instruction_tokens)} instruction tokens</span>
+      </header>
+      <p class="q">${esc(block.instructions)}</p>
+      ${block.reason ? "" : ""}
+      ${options}
+      ${rows}
+    </article>`;
+  }).join("");
+}
+
+function renderDetail() {
+  const detail = state.detail;
+  const fit = detail.fits
+    ? `<span class="pill ok">whole case fits ${state.stateBudget}/${state.queryBudget}</span>`
+    : `<span class="pill over">truncated at ${state.stateBudget}/${state.queryBudget}</span>`;
+  const tab = state.tab;
+  const body = tab === "doc" ? renderDoc(detail)
+    : tab === "dec" ? renderDecisions(detail)
+    : `<pre class="raw">${esc(JSON.stringify(detail.raw, null, 2))}</pre>`;
+  el("detail").innerHTML = `
+    <div class="detail-head">
+      <h1>${esc(detail.case_id)}</h1>
+      ${fit}
+    </div>
+    <div class="sub" style="font:12px var(--mono);color:var(--ink-faint);margin-top:4px">
+      ${esc(detail.config)} · ${plural(detail.decisions.length, "decision")} ·
+      ${num(detail.state_tokens ? detail.state_tokens.total : detail.state_chars)} state tokens
+    </div>
+    <div class="tabs" role="tablist">
+      <button role="tab" data-tab="doc" aria-selected="${tab === "doc"}">document</button>
+      <button role="tab" data-tab="dec" aria-selected="${tab === "dec"}">decisions</button>
+      <button role="tab" data-tab="raw" aria-selected="${tab === "raw"}">raw</button>
+    </div>
+    ${body}
+    <p class="hint">j / k next and previous case · 1 2 3 switch tabs · t toggle tokens · / filter</p>`;
+}
+
+document.addEventListener("click", (event) => {
+  const config = event.target.closest("[data-config]");
+  if (config) { selectConfig(config.dataset.config); return; }
+  const item = event.target.closest("[data-case]");
+  if (item) { selectCase(item.dataset.case); return; }
+  const tab = event.target.closest("[data-tab]");
+  if (tab) { state.tab = tab.dataset.tab; renderDetail(); syncHash(); return; }
+  if (event.target.closest("#more")) { loadPage(); return; }
+  if (event.target.closest("#toggle-tokens")) {
+    state.tokens = !state.tokens; renderDetail(); return;
+  }
+});
+
+el("budget-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  state.stateBudget = Math.max(8, Number(el("b-state").value) || 192);
+  state.queryBudget = Math.max(8, Number(el("b-query").value) || 64);
+  if (state.selected) selectCase(state.selected);
+});
+
+let searchTimer;
+el("search").addEventListener("input", (event) => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    state.filter = event.target.value.trim();
+    state.cases = []; state.offset = 0;
+    loadPage();
+  }, 180);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.target.matches("input, textarea")) {
+    if (event.key === "Escape") event.target.blur();
+    return;
+  }
+  if (event.key === "j" || event.key === "k") {
+    const index = state.cases.findIndex((item) => item.case_id === state.selected);
+    const next = event.key === "j" ? index + 1 : index - 1;
+    if (state.cases[next]) {
+      selectCase(state.cases[next].case_id);
+      document.querySelector(`[data-case="${CSS.escape(state.cases[next].case_id)}"]`)
+        ?.scrollIntoView({ block: "nearest" });
+    }
+  } else if (event.key === "/") {
+    event.preventDefault(); el("search").focus();
+  } else if (["1", "2", "3"].includes(event.key) && state.detail) {
+    state.tab = ["doc", "dec", "raw"][Number(event.key) - 1];
+    renderDetail();
+  } else if (event.key === "t" && state.detail) {
+    state.tokens = !state.tokens; renderDetail();
+  }
+});
+
+boot();
+</script>
+</body>
+</html>
