@@ -248,6 +248,29 @@ for eval loss to move at all produces skill, on a subset small enough to run to
 convergence. Every budget and architecture result so far was measured against a
 model that had learned almost nothing, which is why they all looked the same.
 
+## Auditing for a bug: what was checked and came back clean
+
+"Learns only the marginals" has three classic causes. All three were tested
+against the deployed checkpoint rather than reasoned about:
+
+```
+label alignment      target index points at the gold candidate's row: 50/50
+                     duplicate option texts (which collapse the label): 0 / 3,651
+state is used        scrambling the state moves logits: 289/300 rows, mean 0.21
+candidate is used    scrambling the option text moves logits: 295/300, mean 0.51
+within-group spread  mean 0.82, min 0.002 across 60 choice groups
+```
+
+Both inputs reach the head, the labels are where they claim to be, and the model
+does separate candidates — it separates them badly. A within-group spread of
+0.002 on some groups is the model being indifferent, not the graph being broken.
+
+So the near-zero skill is not a wiring fault. Every bug found this session was in
+the tooling and all are fixed: the mask that took the machine down, offline
+config discovery silently returning `"default"` (an offline run loaded zero
+cases), a query padding mask that causality had been hiding, and an A/B subset
+containing no `score` examples at all.
+
 ## Retraining at a bigger budget: first measurement
 
 The checkpoint was trained at 192/64, so every larger-budget number so far was
