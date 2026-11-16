@@ -248,6 +248,34 @@ for eval loss to move at all produces skill, on a subset small enough to run to
 convergence. Every budget and architecture result so far was measured against a
 model that had learned almost nothing, which is why they all looked the same.
 
+## One task, held out: capacity does not fix it
+
+The sharpest test available: one task, 80/20 split by case, everything filtered to
+fit the budget, and both model sizes trained identically. Held-out data the model
+never sees.
+
+`arc`, balanced four-way choice (gold position 23/25/26/26%), 2,678 train
+decisions, 670 held out:
+
+```
+model      params   held-out loss curve              accuracy   chance
+1.0M       0.87M    1.387 -> 1.425 -> 1.809 -> 3.235    0.278     0.250
+4.68M      4.42M    1.391 -> 1.418 -> 1.395 -> 1.509    0.255     0.250
+```
+
+Both sit at chance. The small model overfits harder; the big one resists slightly
+and is no more accurate. **Capacity is not the blocker.**
+
+An earlier probe on `go_emotions` looked more encouraging and was wrong to trust:
+held-out accuracy 96.3%, but 96.4% of that set is the negative class, so the score
+was the base rate. The model's true-positive rate was 0.069 at 1.0M and 0.000 at
+4.68M — it learned the prior and nothing else. Any task with a lopsided label
+distribution cannot answer "can it learn" with accuracy.
+
+So the sequence across this session is consistent: the model memorises a small
+set, learns trivial synthetic rules, and on every real task it learns the label
+marginals. Not context length, not masks, not memory, not capacity.
+
 ## Auditing for a bug: what was checked and came back clean
 
 "Learns only the marginals" has three classic causes. All three were tested
