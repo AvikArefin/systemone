@@ -77,21 +77,34 @@ whose instructions are 357 tokens and whose budget is 64 says so plainly.
 
 ## The vocabulary sheet
 
-The **vocab** button (or `v`) opens every piece in the tokenizer with its id, what
-it decodes to, and how often the current config uses it. Counts come from the
-first 400 cases of that config: state text, instructions, and option text.
+The **vocab** button (or `v`) lists the whole vocabulary: one row per piece the
+tokenizer knows, which is also one row of the model's embedding table. Each row
+shows its number, the raw piece, what it decodes to, how often it was seen, and
+its share of the tokens counted.
 
-This is the view for tokenizer questions. On `arc` training data:
+The sheet says all of this in its own words, because the three numbers are easy to
+misread:
+
+- **All 2,048 pieces are listed**, used or not. This is the model's actual
+  embedding table, not a sample of it.
+- **"times seen"** is a count inside *this config only* — `arc`, split `train`. It
+  is not the dataset as a whole and not one example.
+- **Counts are a sample**: the first 400 of that config's cases, covering state
+  text, instructions, and options. The cap exists so the sheet opens quickly.
+- **"% of tokens"** is that piece's share of the counted tokens, so the column adds
+  up to 100%.
+
+On `arc` training data:
 
 ```
-873 of 2,048 pieces used · 42,509 tokens over 400 of 3,352 cases
-1,175 pieces never appear
+873 of 2,048 pieces used · 1,175 never seen
+42,509 tokens over 400 of 3,352 cases
 ```
 
-More than half the vocabulary never fires on a single config, which is the
-counter-argument to any claim that the embedding table is doing useful work.
-Pieces with zero uses are printed in red, the table sorts by count or by id, and
-the filter takes a word or a single character.
+"Only never seen" filters to the dead rows. On `arc` they include `<pad>`, `<unk>`,
+stray braces and quote fragments, and near-duplicate merges like `intent` next to
+`intent`. A row the data never reaches is a row that never gets a useful gradient,
+which is the concrete form of "26% of a 1M model is embedding".
 
 ## The raw tab
 
