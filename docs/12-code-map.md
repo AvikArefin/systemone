@@ -20,7 +20,7 @@ Every file, what it does, and where to look when you want to change something.
 | [`checkpoint.py`](../src/systemone/checkpoint.py) | Save/load a named model directory | `save_checkpoint`, `load_checkpoint` |
 | [`paths.py`](../src/systemone/paths.py) | Where checkpoints live | `CHECKPOINT_DIR`, `checkpoint_path()` |
 | [`seeding.py`](../src/systemone/seeding.py) | Reproducibility | `set_seed`, `build_model` |
-| [`corpus.py`](../src/systemone/corpus.py) | Dataset rosters and row loading for train, validation and test | `load_typed_decisions`, `load_train`, `load_test`, `train_configs`, `test_configs`, `parse_decision` |
+| [`corpus.py`](../src/systemone/corpus.py) | Dataset rosters and row loading for train, validation and test | `load_typed_decisions`, `load_train`, `load_test`, `train_configs`, `test_configs`, `UNFIT_CONFIGS`, `parse_decision` |
 | [`decontamination.py`](../src/systemone/decontamination.py) | Test-duplicate fingerprints and the blocklist | `case_fingerprint`, `find_test_duplicates`, `load_blocklist`, `write_blocklist` |
 | [`hf.py`](../src/systemone/hf.py) | Legacy JevBench loader | `load_jevbench`, `split_by_case` |
 | [`__init__.py`](../src/systemone/__init__.py) | Public surface | re-exports |
@@ -36,6 +36,7 @@ Every file, what it does, and where to look when you want to change something.
 | [`train_legacy.py`](../scripts/train_legacy.py) | Train on JevBench with a trained BPE tokenizer | ~20 min |
 | [`measure_budget.py`](../scripts/measure_budget.py) | Measure what each query budget preserves on the test split, per decision kind | minutes |
 | [`measure_state_budget.py`](../scripts/measure_state_budget.py) | Score a checkpoint at several state/query budgets, whole split and on the rows the cap cut | 5 – 30 min |
+| [`measure_fit.py`](../scripts/measure_fit.py) | Report configs that overflow 1024/320 and drift from `UNFIT_CONFIGS` | seconds |
 | [`measure_attention_memory.py`](../scripts/measure_attention_memory.py) | Mask tensor size and attention time per mask strategy | seconds |
 | [`eval.py`](../scripts/eval.py) | Baseline-adjusted Task Avg on the test split | minutes |
 | [`build_tokenizers.py`](../scripts/build_tokenizers.py) | Rebuild and measure comparison tokenizers | minutes |

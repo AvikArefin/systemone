@@ -67,7 +67,13 @@ def config_dir(repo: str, config: str) -> Path | None:
     return candidates[0] if candidates else None
 
 
-def split_files(repo: str, config: str) -> dict[str, Path]:
+def split_files(repo: str, config: str) -> dict[str, list[Path]]:
+    """Arrow files per split, from the newest local `dataset_info.json`.
+
+    A split can be one file or sharded (`...-train-00000-of-00002.arrow`).
+    Returning every shard matters: a config whose train split is sharded looks
+    test-only if only the unsharded name is matched.
+    """
     directory = config_dir(repo, config)
     if directory is None:
         return {}
@@ -75,8 +81,10 @@ def split_files(repo: str, config: str) -> dict[str, Path]:
     files = {}
     for split in info.get("splits", {}):
         matches = sorted(directory.glob(f"*-{split}.arrow"))
+        if not matches:
+            matches = sorted(directory.glob(f"*-{split}-*-of-*.arrow"))
         if matches:
-            files[split] = matches[0]
+            files[split] = matches
     return files
 
 
@@ -240,14 +248,19 @@ class Store:
         key = (repo, config, split)
         with self._lock:
             if key not in self._datasets:
-                from datasets import Dataset
+                from datasets import Dataset, concatenate_datasets
 
-                path = split_files(repo, config).get(split)
-                if path is None:
+                paths = split_files(repo, config).get(split)
+                if not paths:
                     raise FileNotFoundError(
                         f"{repo} · {config} · {split} is not in the local cache"
                     )
-                self._datasets[key] = Dataset.from_file(str(path))
+                shards = [Dataset.from_file(str(path)) for path in paths]
+                self._datasets[key] = (
+                    shards[0]
+                    if len(shards) == 1
+                    else concatenate_datasets(shards)
+                )
             return self._datasets[key]
 
     def ids(self, repo: str, config: str, split: str) -> list[str]:

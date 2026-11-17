@@ -752,3 +752,38 @@ class TestRawAccuracyFlatteredTheModel:
         assert "build_report" in source
         assert "max_candidates=None" in source
         assert "shuffle_options=False" in source
+
+
+class TestUnfitConfigsWereStillTrained:
+    """BUG: configs that overflow even a 1024/320 budget were loaded and cut.
+
+    31 of 179 cached configs cannot fit that budget -- `qasper` alone is a
+    26,977-token state. Training on them spends steps on text the model never
+    sees, so the roster now omits them unless asked.
+    """
+
+    def test_train_configs_omits_unfit_configs(self, monkeypatch):
+        import systemone.corpus as corpus
+
+        monkeypatch.setattr(
+            corpus,
+            "configs_with_split",
+            lambda repo, split: ["arc", "agnews", "qasper"],
+        )
+        assert corpus.train_configs() == ["arc"]
+        assert corpus.train_configs(include_unfit=True) == ["arc", "agnews", "qasper"]
+
+    def test_load_train_drops_unfit_configs_even_when_named(self, monkeypatch):
+        import systemone.corpus as corpus
+
+        seen = {}
+
+        def fake(repo, configs, **kwargs):
+            seen["configs"] = configs
+            return {}
+
+        monkeypatch.setattr(corpus, "load_typed_decisions", fake)
+        corpus.load_train(["arc", "agnews"])
+        assert seen["configs"] == ["arc"]
+        corpus.load_train(["arc", "agnews"], include_unfit=True)
+        assert seen["configs"] == ["arc", "agnews"]

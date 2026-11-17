@@ -46,7 +46,9 @@ uv run python scripts/eval.py                 # baseline-adjusted Task Avg
 ```
 
 Environment knobs: `SYSTEMONE_EPOCHS`, `SYSTEMONE_BATCH`, `BEKKO_CASES`,
-`SYSTEMONE_CHECKPOINT_DIR` (defaults to `artifacts/`).
+`SYSTEMONE_CHECKPOINT_DIR` (defaults to `artifacts/`), and
+`SYSTEMONE_INCLUDE_UNFIT=1` to train on configs that overflow even a 1024/320
+budget (they are excluded by default).
 
 ## Tests
 

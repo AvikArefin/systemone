@@ -35,6 +35,7 @@ GRAD_ACCUM = int(os.environ.get("SYSTEMONE_GRAD_ACCUM", "1"))
 RESUME = os.environ.get("SYSTEMONE_RESUME", "0") == "1"
 FIT_ONLY = os.environ.get("SYSTEMONE_FIT_ONLY", "0") == "1"
 DEV = os.environ.get("SYSTEMONE_DEV", "0") == "1"
+INCLUDE_UNFIT = os.environ.get("SYSTEMONE_INCLUDE_UNFIT", "0") == "1"
 
 if DEV:
     # Fast loop: fewer configs, fewer candidates per case, a probe eval each
@@ -55,7 +56,8 @@ set_seed(SEED)
 device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
 
 started = time.perf_counter()
-configs = train_configs()
+configs = train_configs(include_unfit=INCLUDE_UNFIT)
+excluded = len(train_configs(include_unfit=True)) - len(configs)
 if CONFIG_LIMIT:
     configs = configs[:CONFIG_LIMIT]
 train_grouped = load_train(
@@ -63,7 +65,7 @@ train_grouped = load_train(
 )
 train_set = [example for case in train_grouped.values() for example in case]
 print(f"train load_s={time.perf_counter() - started:.1f} configs={len(configs)} "
-      f"cases={len(train_grouped)} examples={len(train_set)}")
+      f"excluded_unfit={excluded} cases={len(train_grouped)} examples={len(train_set)}")
 
 test_grouped = load_test(seed=SEED)
 test_set = [example for case in test_grouped.values() for example in case]

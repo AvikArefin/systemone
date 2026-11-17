@@ -14,6 +14,7 @@ from systemone.bpe import SentencePieceTokenizer
 from systemone.data import EncodedSet
 from systemone.corpus import (
     BEKKO_REPO,
+    UNFIT_CONFIGS,
     _options,
     _text,
     load_test,
@@ -149,8 +150,16 @@ def test_evaluation_roster_has_106_configs():
 
 def test_train_configs_filters_to_train_splits():
     configs = set(train_configs())
-    assert "agnews" in configs
+    assert "arc" in configs
     assert "bbq" not in configs
+
+
+def test_train_configs_drops_unfit_configs_by_default():
+    configs = set(train_configs())
+    including = set(train_configs(include_unfit=True))
+    assert "agnews" not in configs
+    assert "agnews" in including
+    assert including - configs == set(UNFIT_CONFIGS) & including
 
 
 def test_wide_options_survive_without_a_cap():

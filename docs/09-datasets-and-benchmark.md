@@ -168,6 +168,67 @@ difficulty.
 Both are still ~1%, which is the point worth keeping: the subset you report on
 does not rescue a model that has learned only the label marginals.
 
+## Configs that cannot fit even at 1024/320
+
+A larger budget does not rescue everything. Measured on the first three cases of
+every cached config with `bekko_tiny`, **32 of 182 configs** still overflow a
+**1024-token state** or a **320-token query**. Those rows cannot be trained
+without cutting most of their text, so `corpus.UNFIT_CONFIGS` marks them and
+`train_configs()` / `load_train()` leave them out by default.
+
+State over 1024 (15):
+
+| config | state tokens |
+|---|---:|
+| `qasper` | 26,977 |
+| `contract_nli` | 5,511 |
+| `helpsteer3` | 5,189 |
+| `synthetic_relevance__trivia_qa` | 1,884 |
+| `synthetic_relevance__nanocoir` | 1,715 |
+| `open_jev__drone-control-v1` | 1,664 |
+| `open_jev__amount-extraction-control-v1` | 1,502 |
+| `open_jev__context-retention-control-v1` | 1,472 |
+| `open_jev__browser-control-v1` | 1,415 |
+| `synthetic_relevance__fineweb` | 1,408 (query 324 too) |
+| `open_jev__email-selection-control-v1` | 1,381 |
+| `open_jev__phone-extraction-control-v1` | 1,365 |
+| `open_jev__entity-alignment-control-v1` | 1,282 |
+| `followir_robust04` | 1,203 |
+| `followir_news21` | 1,081 |
+
+Query over 320, state fits (17):
+
+| config | query tokens |
+|---|---:|
+| `trivia_qa` | 1,919 |
+| `fineweb` | 1,354 |
+| `agnews` | 1,265 |
+| `pubmed` | 1,192 |
+| `codesearch` | 1,056 |
+| `bge-hn-hotpotqa` | 902 |
+| `arxiv` | 834 |
+| `wikipedia_hard_negatives_english` | 833 |
+| `bge-hn-miracl_en` | 778 |
+| `bge-hn-colliee` | 733 |
+| `bge-hn-squad` | 718 |
+| `natural_questions` | 687 |
+| `oasst1` | 553 |
+| `bge-hn-mr-tydi_english` | 519 |
+| `bge-hn-pubmed_qa_labeled` | 404 |
+| `bge-hn-nq` | 377 |
+| `bge-hn-trivia` | 363 |
+
+The training roster therefore drops from 153 to 124 configs. Three of the 32
+(`followir_news21`, `followir_robust04`, `synthetic_relevance__nanocoir`) are
+test-only and were never in the training roster; the other 29 are the
+difference. Evaluation is untouched: `test_configs()` still returns all 106
+benchmark configs, with the same truncation behaviour documented above.
+
+To load them anyway, pass `include_unfit=True` to `train_configs()` or
+`load_train()`, or set `SYSTEMONE_INCLUDE_UNFIT=1` for
+`scripts/train_main.py`. Reproduce the list with
+`uv run python scripts/measure_fit.py`; it also reports drift from the constant.
+
 ## One repo, three splits
 
 Bekko is the only dataset dependency. Its 182 configs split three ways:

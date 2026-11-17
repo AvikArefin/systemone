@@ -6,6 +6,7 @@ is the evaluation set, and `validation` holds its 100-case samples.
 
 import json
 import random
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -217,6 +218,47 @@ BEKKO_REPO = "hotchpotch/bekko-system-one-dataset-v0"
 # published benchmark -- all 106 shared configs match row for row -- so training
 # and evaluation never depend on two releases that can drift apart.
 
+# Configs that still overflow a 1024-token state or a 320-token query. Measured
+# on the first three cases of every cached config with `bekko_tiny`
+# (`scripts/measure_fit.py`); the number is the longest state, or the longest
+# instruction + separator + candidate, seen in those cases. Truncation would
+# remove most of the text, so training omits them by default. Pass
+# `include_unfit=True` or set `SYSTEMONE_INCLUDE_UNFIT=1` to load them anyway.
+UNFIT_CONFIGS: dict[str, str] = {
+    "agnews": "query 1265",
+    "arxiv": "query 834",
+    "bge-hn-colliee": "query 733",
+    "bge-hn-hotpotqa": "query 902",
+    "bge-hn-miracl_en": "query 778",
+    "bge-hn-mr-tydi_english": "query 519",
+    "bge-hn-nq": "query 377",
+    "bge-hn-pubmed_qa_labeled": "query 404",
+    "bge-hn-squad": "query 718",
+    "bge-hn-trivia": "query 363",
+    "codesearch": "query 1056",
+    "contract_nli": "state 5511",
+    "fineweb": "query 1354",
+    "followir_news21": "state 1081",
+    "followir_robust04": "state 1203",
+    "helpsteer3": "state 5189",
+    "natural_questions": "query 687",
+    "oasst1": "query 553",
+    "open_jev__amount-extraction-control-v1": "state 1502",
+    "open_jev__browser-control-v1": "state 1415",
+    "open_jev__context-retention-control-v1": "state 1472",
+    "open_jev__drone-control-v1": "state 1664",
+    "open_jev__email-selection-control-v1": "state 1381",
+    "open_jev__entity-alignment-control-v1": "state 1282",
+    "open_jev__phone-extraction-control-v1": "state 1365",
+    "pubmed": "query 1192",
+    "qasper": "state 26977",
+    "synthetic_relevance__fineweb": "state 1408, query 324",
+    "synthetic_relevance__nanocoir": "state 1715",
+    "synthetic_relevance__trivia_qa": "state 1884",
+    "trivia_qa": "query 1919",
+    "wikipedia_hard_negatives_english": "query 833",
+}
+
 
 def all_configs(repo: str = BEKKO_REPO) -> list[str]:
     """Config names for a dataset repo, falling back to the local cache.
@@ -242,6 +284,19 @@ def all_configs(repo: str = BEKKO_REPO) -> list[str]:
     return sorted(path.name for path in root.iterdir() if path.is_dir())
 
 
+def _arrow_split(path: Path) -> str:
+    """Split name from an Arrow filename, including sharded files.
+
+    `...-train.arrow` is one file; `...-train-00000-of-00002.arrow` is a shard
+    of one. Reading the last `-` token gives `00002` for the shard, which made
+    offline rosters miss every sharded train split.
+    """
+    stem = path.name.removesuffix(".arrow")
+    if re.search(r"-\d+-of-\d+$", stem):
+        stem = stem.rsplit("-", 3)[0]
+    return stem.rsplit("-", 1)[-1]
+
+
 def _local_splits(repo: str) -> dict[str, set[str]]:
     """`{config: {split}}` from the Arrow files already in the local cache."""
     from datasets.config import HF_DATASETS_CACHE
@@ -254,8 +309,7 @@ def _local_splits(repo: str) -> dict[str, set[str]]:
         if not config.is_dir():
             continue
         splits[config.name] = {
-            path.name.rsplit("-", 1)[-1].removesuffix(".arrow")
-            for path in config.glob("*/*/*.arrow")
+            _arrow_split(path) for path in config.glob("*/*/*.arrow")
         }
     return splits
 
@@ -294,9 +348,16 @@ def test_configs(repo: str = BEKKO_REPO) -> list[str]:
     return configs_with_split(repo, "test")
 
 
-def train_configs(repo: str = BEKKO_REPO) -> list[str]:
-    """The training roster: every config that has a `train` split (153)."""
-    return configs_with_split(repo, "train")
+def train_configs(repo: str = BEKKO_REPO, *, include_unfit: bool = False) -> list[str]:
+    """The training roster: every config that has a `train` split (153).
+
+    Configs in `UNFIT_CONFIGS` are left out unless `include_unfit` is true:
+    they overflow even a 1024/320 budget, so most of their text would be cut.
+    """
+    configs = configs_with_split(repo, "train")
+    if include_unfit:
+        return configs
+    return [config for config in configs if config not in UNFIT_CONFIGS]
 
 
 def load_typed_decisions(
@@ -392,6 +453,7 @@ def load_train(
     seed: int = 0,
     max_cases: int | None = None,
     exclude: dict[str, set[str]] | None = None,
+    include_unfit: bool = False,
 ) -> dict[str, list[Example]]:
     """Training data, minus any test-duplicate cases in `exclude`.
 
@@ -399,9 +461,14 @@ def load_train(
     `decontamination`. Case ids and `input_hash` cannot stand in for it: across
     all 106 test configs they overlap in zero rows, while the same case text does
     appear in train. See `case_fingerprint`.
+
+    `UNFIT_CONFIGS` are dropped whether `configs` is given or defaulted, unless
+    `include_unfit` is true.
     """
     if configs is None:
-        configs = train_configs()
+        configs = train_configs(include_unfit=include_unfit)
+    elif not include_unfit:
+        configs = [config for config in configs if config not in UNFIT_CONFIGS]
     return load_typed_decisions(
         BEKKO_REPO,
         configs,
