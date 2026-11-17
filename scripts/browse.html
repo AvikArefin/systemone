@@ -236,6 +236,7 @@
   table.vocab td { padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
   table.vocab td.id { font: 11.5px var(--mono); color: var(--ink-faint); width: 62px; }
   table.vocab td.piece { font: 13px var(--mono); width: 220px; overflow-wrap: anywhere; }
+  table.vocab td.piece.foreign { text-decoration: underline dotted var(--gold); text-underline-offset: 3px; }
   table.vocab td.text { color: var(--ink-soft); }
   table.vocab td.count { font: 11.5px var(--mono); text-align: right; width: 90px; }
   table.vocab td.share { width: 150px; }
@@ -256,8 +257,10 @@
   <div class="brand">systemone <span>data browser</span></div>
   <select id="repo-select" aria-label="Dataset repository"></select>
   <select id="split-select" aria-label="Split"></select>
+  <select id="tokenizer-select" aria-label="Tokenizer"></select>
   <span class="chip" id="tokinfo">…</span>
   <button class="ghost" id="vocab-button">vocab</button>
+  <button class="ghost" id="foreign-button" title="Which configs contain foreign characters or emoji">foreign</button>
   <form class="budget" id="budget-form">
     <label for="b-state">state</label>
     <input id="b-state" type="number" min="8" max="8192" step="8" value="192">
@@ -306,16 +309,55 @@
       <p><strong>What red means.</strong> The piece exists in the vocabulary but this
       config never used it. A row the data never reaches is a row the model never
       really learns, which is why a vocabulary can be far bigger than the text needs.</p>
+      <p><strong>What "foreign" means.</strong> A single character the training
+      corpus should not contain — Chinese, Cyrillic, Arabic, or an emoji like ✅.
+      <span id="vocab-foreign-count">…</span> of the rows are these. They won a slot
+      because <code>character_coverage=1.0</code> reserves one for every character it
+      ever sees, including a stray <code>联系卡</code> in a disclaimer. No English row
+      can spend them, so they are dead weight in the embedding table. New tokenizers
+      filter these out of the corpus first; an older model still shows them.</p>
     </div>
     <div class="sheet-tools">
       <input id="vocab-filter" type="search" placeholder="filter pieces, e.g. a word or a single character…">
       <button class="toggle" id="vocab-unused" aria-pressed="false">only never seen</button>
+      <button class="toggle" id="vocab-foreign" aria-pressed="false">only foreign</button>
       <button class="toggle" id="vocab-sort" aria-pressed="true">sort by count</button>
     </div>
     <div class="sheet-scroll"><table class="vocab"><thead><tr>
       <th>row</th><th>piece</th><th>reads as</th><th>times seen</th><th>% of tokens</th>
     </tr></thead><tbody id="vocab-rows"></tbody></table></div>
     <p class="legend" id="vocab-legend"></p>
+  </div>
+</div>
+
+<div class="sheet" id="foreign-sheet" hidden>
+  <div class="sheet-body">
+    <div class="sheet-head">
+      <h2>foreign characters</h2>
+      <span class="sub" id="foreign-sub">…</span>
+      <button class="close" id="foreign-close">close</button>
+    </div>
+    <div class="explain">
+      <p><strong>What this counts.</strong> Rows in each config that contain a
+      character this project does not train on — Chinese, Cyrillic, Arabic, Hebrew,
+      Thai and so on, plus emoji. These characters each take a vocabulary slot even
+      though no English row can use them.</p>
+      <p><strong>Why Cyrillic shows up here.</strong> It is in the strip list, so a
+      tokenizer trained now never sees it. An older model still has the pieces. The
+      two big sources are <code>synthetic_relevance__nanocoir</code> (Cyrillic
+      document titles) and <code>qasper</code> (mixed-language paper text).</p>
+      <p><strong>How to read the number.</strong> Characters, not rows. A config with
+      300 characters might have one on every row. The right-hand column breaks it
+      down by script so you can see which one you are looking at.</p>
+    </div>
+    <div class="sheet-tools">
+      <input id="foreign-filter" type="search" placeholder="filter by script, e.g. cyrillic…">
+      <button class="toggle" id="foreign-rows" aria-pressed="true">sort by rows</button>
+    </div>
+    <div class="sheet-scroll"><table class="vocab"><thead><tr>
+      <th>config</th><th>rows hit</th><th>characters</th><th>scripts</th>
+    </tr></thead><tbody id="foreign-rows-body"></tbody></table></div>
+    <p class="legend" id="foreign-legend"></p>
   </div>
 </div>
 
@@ -332,6 +374,9 @@ const state = {
   selected: null, detail: null, tab: "doc", tokens: true,
   stateBudget: 192, queryBudget: 64, loading: false,
   vocab: null, vocabFilter: "", vocabSort: "count", vocabUnused: false,
+  vocabForeign: false,
+  tokenizers: [], tokenizerKey: null,
+  foreign: null, foreignFilter: "", foreignByRows: true,
 };
 
 function report(message) {
@@ -364,8 +409,9 @@ async function boot() {
     state.queryBudget = meta.budget.query;
     el("b-state").value = meta.budget.state;
     el("b-query").value = meta.budget.query;
-    el("tokinfo").textContent = meta.tokenizer === "none"
-      ? "no tokenizer" : `vocab ${num(meta.tokenizer)}`;
+    state.tokenizers = meta.tokenizers || [];
+    state.tokenizerKey = meta.tokenizer_key || null;
+    renderTokenizerSelect();
     el("vocab-button").disabled = meta.tokenizer === "none";
     if (!state.repos.length) {
       el("configs").innerHTML = '<p class="empty">No datasets in the local cache.</p>';
@@ -401,6 +447,21 @@ function renderSplitSelect() {
   el("split-select").innerHTML = splits.map((split) =>
     `<option value="${esc(split)}" ${split === state.split ? "selected" : ""}>${esc(split)}</option>`).join("");
   el("split-select").disabled = splits.length < 2;
+}
+
+function renderTokenizerSelect() {
+  const select = el("tokenizer-select");
+  select.innerHTML = state.tokenizers.map((entry) =>
+    `<option value="${esc(entry.key)}" ${entry.key === state.tokenizerKey ? "selected" : ""}>
+      ${esc(entry.label)} · ${num(entry.vocab)} pieces${
+        entry.foreign_singles ? ` · ${num(entry.foreign_singles)} foreign` : ""
+      }</option>`).join("");
+  select.disabled = state.tokenizers.length < 2;
+  const entry = state.tokenizers.find((item) => item.key === state.tokenizerKey);
+  el("tokinfo").textContent = entry
+    ? `vocab ${num(entry.vocab)}${entry.foreign_singles ? ` · ${num(entry.foreign_singles)} foreign` : ""}`
+    : "no tokenizer";
+  el("tokinfo").title = entry && entry.description ? entry.description : "";
 }
 
 async function selectRepo(repo, split = null, config = null) {
@@ -600,6 +661,52 @@ function renderDetail() {
     <p class="hint">j / k next and previous case · 1 2 3 tabs · t tokens · / filter · v vocab</p>`;
 }
 
+async function openForeign() {
+  if (!state.repo) return;
+  el("foreign-sheet").hidden = false;
+  el("foreign-sub").textContent = state.repo.split("/").pop();
+  el("foreign-rows-body").innerHTML =
+    '<tr><td colspan="4" class="legend">scanning cached configs…</td></tr>';
+  try {
+    state.foreign = await api("/api/foreign", { repo: state.repo });
+    renderForeign();
+    el("foreign-filter").focus();
+  } catch (error) {
+    el("foreign-rows-body").innerHTML =
+      `<tr><td colspan="4" class="legend">${esc(error.message)}</td></tr>`;
+  }
+}
+
+function renderForeign() {
+  const data = state.foreign;
+  if (!data) return;
+  const filter = state.foreignFilter.toLowerCase();
+  const entries = Object.entries(data.configs)
+    .map(([config, info]) => ({ config, ...info }))
+    .filter((entry) => !filter
+      || entry.config.toLowerCase().includes(filter)
+      || Object.keys(entry.scripts).some((script) => script.toLowerCase().includes(filter)))
+    .sort((a, b) => state.foreignByRows ? b.rows - a.rows : b.chars - a.chars);
+  el("foreign-rows-body").innerHTML = entries.length ? entries.map((entry) => {
+    const scripts = Object.entries(entry.scripts)
+      .slice(0, 5)
+      .map(([script, count]) => `<code>${esc(script.toLowerCase())}</code> ${num(count)}`)
+      .join(" · ");
+    return `<tr>
+      <td class="piece">${esc(entry.config)}</td>
+      <td class="count">${num(entry.rows)} / ${num(entry.scanned)}</td>
+      <td class="count">${num(entry.chars)}</td>
+      <td class="text">${scripts}</td>
+    </tr>`;
+  }).join("") : '<tr><td colspan="4" class="legend">No config matches that filter.</td></tr>';
+  const total = entries.reduce((sum, entry) => sum + entry.chars, 0);
+  el("foreign-legend").textContent =
+    `${entries.length} config(s) with foreign characters, ${num(total)} characters total. `
+    + `Each config is sampled at its first ${num(data.cap)} cases, so this finds what a `
+    + `config contains, not its exact volume. "rows hit" is how many sampled rows have `
+    + `at least one such character.`;
+}
+
 async function openVocab() {
   if (!state.config) return;
   el("vocab-sheet").hidden = false;
@@ -630,6 +737,7 @@ function renderVocab() {
   const byCount = state.vocabSort === "count";
   const items = vocab.items
     .filter((item) => (!state.vocabUnused || item.count === 0)
+      && (!state.vocabForeign || item.script === "foreign")
       && (!filter
         || item.piece.toLowerCase().includes(filter)
         || item.text.toLowerCase().includes(filter)))
@@ -640,10 +748,13 @@ function renderVocab() {
     + `${num(vocab.used)} of ${num(vocab.size)} pieces used, ${num(vocab.unused)} never seen`;
   el("vocab-size").textContent = num(vocab.size);
   el("vocab-sample").textContent = `${num(vocab.scanned)} of ${num(vocab.cases)} cases`;
+  if (el("vocab-foreign-count")) {
+    el("vocab-foreign-count").textContent = num(vocab.foreign_singles);
+  }
   el("vocab-rows").innerHTML = items.length ? items.map((item) => `
     <tr class="${item.count === 0 ? "dead" : ""}">
       <td class="id">${item.id}</td>
-      <td class="piece">${piece(item.piece)}</td>
+      <td class="piece${item.script === "foreign" ? " foreign" : ""}">${piece(item.piece)}</td>
       <td class="text">${esc(item.text.replace(/\u2581/g, " "))}</td>
       <td class="count">${num(item.count)}</td>
       <td class="share"><span>
@@ -672,11 +783,26 @@ document.addEventListener("click", (event) => {
     state.tokens = !state.tokens; renderDetail(); return;
   }
   if (event.target.closest("#vocab-button")) { openVocab(); return; }
+  if (event.target.closest("#foreign-button")) { openForeign(); return; }
+  if (event.target.closest("#foreign-close")) { el("foreign-sheet").hidden = true; return; }
+  if (event.target.closest("#foreign-rows")) {
+    const button = event.target.closest("#foreign-rows");
+    state.foreignByRows = !state.foreignByRows;
+    button.setAttribute("aria-pressed", state.foreignByRows);
+    button.textContent = state.foreignByRows ? "sort by rows" : "sort by characters";
+    renderForeign(); return;
+  }
   if (event.target.closest("#vocab-close")) { el("vocab-sheet").hidden = true; return; }
   if (event.target.closest("#vocab-unused")) {
     const button = event.target.closest("#vocab-unused");
     state.vocabUnused = !state.vocabUnused;
     button.setAttribute("aria-pressed", state.vocabUnused);
+    renderVocab(); return;
+  }
+  if (event.target.closest("#vocab-foreign")) {
+    const button = event.target.closest("#vocab-foreign");
+    state.vocabForeign = !state.vocabForeign;
+    button.setAttribute("aria-pressed", state.vocabForeign);
     renderVocab(); return;
   }
   if (event.target.closest("#vocab-sort")) {
@@ -687,6 +813,7 @@ document.addEventListener("click", (event) => {
     renderVocab(); return;
   }
   if (event.target === el("vocab-sheet")) { el("vocab-sheet").hidden = true; return; }
+  if (event.target === el("foreign-sheet")) { el("foreign-sheet").hidden = true; return; }
 });
 
 el("repo-select").addEventListener("change", (event) => {
@@ -701,6 +828,20 @@ el("split-select").addEventListener("change", (event) => {
   el("detail").innerHTML = '<p class="empty">Pick a case.</p>';
   syncHash();
   loadPage();
+});
+
+el("tokenizer-select").addEventListener("change", async (event) => {
+  const key = event.target.value;
+  try {
+    const meta = await api("/api/tokenizer", { key });
+    state.tokenizerKey = meta.tokenizer_key;
+    state.tokenizers = meta.tokenizers || [];
+    state.vocab = null;
+    renderTokenizerSelect();
+    el("vocab-button").disabled = meta.tokenizer === "none";
+    if (state.selected) await selectCase(state.selected);
+    if (!el("vocab-sheet").hidden) await openVocab();
+  } catch (error) { report(error.message); }
 });
 
 el("budget-form").addEventListener("submit", (event) => {
@@ -721,6 +862,11 @@ el("vocab-filter").addEventListener("input", (event) => {
   renderVocab();
 });
 
+el("foreign-filter").addEventListener("input", (event) => {
+  state.foreignFilter = event.target.value.trim();
+  renderForeign();
+});
+
 let searchTimer;
 el("search").addEventListener("input", (event) => {
   clearTimeout(searchTimer);
@@ -739,6 +885,10 @@ el("config-filter").addEventListener("input", (event) => {
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !el("vocab-sheet").hidden) {
     el("vocab-sheet").hidden = true;
+    return;
+  }
+  if (event.key === "Escape" && !el("foreign-sheet").hidden) {
+    el("foreign-sheet").hidden = true;
     return;
   }
   if (event.key === "v" && !event.target.matches("input, textarea")) {

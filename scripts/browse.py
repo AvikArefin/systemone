@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import threading
+import unicodedata
 from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -20,7 +21,7 @@ from urllib.parse import parse_qs, urlparse
 for name in ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE"):
     os.environ.setdefault(name, "1")
 
-from systemone.bpe import SentencePieceTokenizer
+from systemone.bpe import SentencePieceTokenizer, is_foreign
 from systemone.paths import CHECKPOINT_DIR
 from systemone.prompt import choice_query, noul_query, score_query
 from systemone.s1mb import BEKKO_REPO, S1MB_REPO, parse_decision, render_state
@@ -31,6 +32,7 @@ HTML = Path(__file__).with_name("browse.html")
 DEFAULT_TOKENIZER = CHECKPOINT_DIR / "bekko_tiny" / "tokenizer.model"
 REPOS = {S1MB_REPO: "benchmark", BEKKO_REPO: "training"}
 VOCAB_CASE_CAP = 400  # cases one vocabulary count reads
+FOREIGN_SCAN_CASES = 250  # cases per config in the foreign-character scan
 
 
 def plain(value) -> str:
@@ -86,13 +88,151 @@ def head_tail_split(length: int, limit: int) -> tuple[int, int]:
     return head, limit - head
 
 
+def piece_script(piece: str) -> str:
+    """Classify a vocabulary piece so the sheet can show what it costs.
+
+    `foreign` marks characters from a script the training corpus should never
+    contain -- the ones `train_tokenizer` strips. `latin` keeps accented letters
+    and typography, which do appear in English rows.
+    """
+    body = piece.replace("\u2581", "")
+    if not body:
+        return "marker"
+    if all(ord(char) < 128 for char in body):
+        return "ascii"
+    if all(not is_foreign(char) for char in body):
+        return "latin"
+    return "foreign"
+
+
+def script_of(char: str) -> str:
+    """Uppercase Unicode script name, so a scan can group by `CYRILLIC` etc."""
+    name = unicodedata.name(char, "")
+    return name.split()[0] if name else "UNKNOWN"
+
+
+def foreign_texts(row_input: dict) -> list[str]:
+    """Every piece of text a row contributes, in the order the tokenizer sees it."""
+    texts = [render_state(row_input["state_json"])]
+    for decision in row_input["decisions"]:
+        texts.append(plain(decision.get("instructions_json")))
+        for criterion in decision.get("criteria") or []:
+            texts.append(plain(criterion.get("description_json")))
+    return texts
+
+
+def discover_tokenizers(explicit: Path | None) -> list[dict]:
+    """Every tokenizer the browser can offer, newest layout first.
+
+    Looks at the default checkpoint, any other `artifacts/*/tokenizer.model`,
+    and whatever `--tokenizer` was given, so the comparison models built by
+    `train_tokenizer` show up without editing the script.
+    """
+    seen: dict[Path, dict] = {}
+    candidates: list[Path] = []
+    if explicit is not None:
+        candidates.append(explicit)
+    if DEFAULT_TOKENIZER.exists():
+        candidates.append(DEFAULT_TOKENIZER)
+    candidates.extend(sorted(CHECKPOINT_DIR.glob("*/tokenizer.model")))
+    candidates.extend(sorted(CHECKPOINT_DIR.glob("*/*/tokenizer.model")))
+
+    for path in candidates:
+        if not path.exists():
+            continue
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        try:
+            tokenizer = SentencePieceTokenizer(resolved)
+        except Exception:
+            continue
+        pieces = [tokenizer.sp.id_to_piece(i) for i in range(tokenizer.vocab_size)]
+        foreign_singles = sum(
+            1 for piece in pieces
+            if len(piece.replace("\u2581", "")) == 1
+            and is_foreign(piece.replace("\u2581", ""))
+        )
+        try:
+            label = str(resolved.parent.relative_to(CHECKPOINT_DIR))
+        except ValueError:
+            label = str(resolved.parent)
+
+        # A version directory may describe itself, so the picker can say what
+        # the model actually is rather than just its path.
+        meta_file = resolved.parent / "meta.json"
+        description = ""
+        if meta_file.exists():
+            try:
+                description = json.loads(meta_file.read_text()).get("description", "")
+            except (OSError, json.JSONDecodeError):
+                description = ""
+
+        seen[resolved] = {
+            "key": label,
+            "label": label,
+            "description": description,
+            "path": str(resolved),
+            "vocab": tokenizer.vocab_size,
+            "foreign_singles": foreign_singles,
+            "pieces": pieces,
+        }
+    return list(seen.values())
+
+
 class Store:
-    def __init__(self, tokenizer: SentencePieceTokenizer | None):
-        self.tokenizer = tokenizer
+    def __init__(
+        self,
+        tokenizers: list[dict] | object | None = None,
+        current: str | None = None,
+    ):
+        # A single tokenizer instance is allowed for tests and one-off scripts;
+        # the server passes the discovery list instead.
+        if tokenizers is not None and not isinstance(tokenizers, list):
+            self.tokenizers = {"default": {"key": "default", "label": "default",
+                                           "path": str(getattr(tokenizers, "model_path", "")),
+                                           "vocab": tokenizers.vocab_size,
+                                           "foreign_singles": 0, "pieces": []}}
+            self._tokenizer = tokenizers
+            self.current = "default"
+        else:
+            self.tokenizers = {entry["key"]: entry for entry in (tokenizers or [])}
+            self._tokenizer = None
+            self.current = current if current in self.tokenizers else next(
+                iter(self.tokenizers), None
+            )
         self._datasets: dict[tuple[str, str, str], object] = {}
         self._ids: dict[tuple[str, str, str], list[str]] = {}
-        self._counts: dict[tuple[str, str, str], dict] = {}
+        self._counts: dict[tuple[str, str, str, str], dict] = {}
         self._lock = threading.RLock()  # ids() re-enters dataset()
+
+    @property
+    def tokenizer(self) -> SentencePieceTokenizer | None:
+        """The selected tokenizer, loaded on first use.
+
+        Rebuilt rather than cached across a switch: a `SentencePieceProcessor`
+        holds its vocabulary, so keeping two alive would only leak memory for a
+        page that shows one at a time.
+        """
+        if self.current is None:
+            return None
+        entry = self.tokenizers[self.current]
+        # A tokenizer passed straight in (tests, one-off scripts) is used as-is.
+        if not entry["path"]:
+            return self._tokenizer
+        if self._tokenizer is None or getattr(
+            self._tokenizer, "model_path", None
+        ) != entry["path"]:
+            self._tokenizer = SentencePieceTokenizer(entry["path"])
+        return self._tokenizer
+
+    def select_tokenizer(self, key: str) -> dict:
+        if key not in self.tokenizers:
+            raise LookupError(f"no tokenizer named {key!r}")
+        self.current = key
+        if self.tokenizers[key]["path"]:
+            self._tokenizer = None
+        return self.meta()
 
     def dataset(self, repo: str, config: str, split: str):
         key = (repo, config, split)
@@ -128,7 +268,18 @@ class Store:
             repos.append({"name": repo, "role": role, "configs": configs})
         return {
             "repos": repos,
-            "tokenizer": "none" if self.tokenizer is None else self.tokenizer.vocab_size,
+            "tokenizer": "none" if self.current is None else self.tokenizers[self.current]["vocab"],
+            "tokenizers": [
+                {
+                    "key": entry["key"],
+                    "label": entry["label"],
+                    "description": entry.get("description", ""),
+                    "vocab": entry["vocab"],
+                    "foreign_singles": entry["foreign_singles"],
+                }
+                for entry in self.tokenizers.values()
+            ],
+            "tokenizer_key": self.current,
         }
 
     def tokens(self, ids: list[int], budget: int) -> dict:
@@ -144,6 +295,48 @@ class Store:
             "tail_tokens": [decode([i]) for i in ids[-tail:]] if tail else [],
             "ids": ids[:head] + (ids[-tail:] if tail else []),
         }
+
+    def foreign_scan(self, repo: str) -> dict:
+        """Which configs contain foreign characters, and which script.
+
+        Answers "where is the Cyrillic coming from" without opening config after
+        config by hand. Capped per config so it stays a quick scan rather than a
+        full pass over every dataset in the cache.
+        """
+        key = ("scan", repo)
+        if key not in self._counts:
+            results = {}
+            for config in cached_configs(repo):
+                splits = split_files(repo, config)
+                split = "train" if "train" in splits else next(iter(splits), None)
+                if split is None:
+                    continue
+                try:
+                    dataset = self.dataset(repo, config, split)
+                except Exception:
+                    continue
+                scanned = min(len(dataset), FOREIGN_SCAN_CASES)
+                rows = dataset[0:scanned]
+                scripts: Counter = Counter()
+                rows_hit = 0
+                for row_input in rows["input"]:
+                    hit = False
+                    for text in foreign_texts(row_input):
+                        for char in text:
+                            if is_foreign(char):
+                                scripts[script_of(char)] += 1
+                                hit = True
+                    rows_hit += 1 if hit else 0
+                if scripts:
+                    results[config] = {
+                        "split": split,
+                        "scanned": scanned,
+                        "rows": rows_hit,
+                        "chars": sum(scripts.values()),
+                        "scripts": dict(scripts.most_common()),
+                    }
+            self._counts[key] = results
+        return {"configs": self._counts[key], "cap": FOREIGN_SCAN_CASES}
 
     def page(self, repo, config, split, offset, limit, query, jump) -> dict:
         ids = self.ids(repo, config, split)
@@ -288,7 +481,7 @@ class Store:
         """
         if self.tokenizer is None:
             raise LookupError("no tokenizer loaded, so there is no vocabulary to show")
-        key = (repo, config, split)
+        key = (repo, config, split, self.current)
         if key not in self._counts:
             dataset = self.dataset(repo, config, split)
             scanned = min(len(dataset), VOCAB_CASE_CAP)
@@ -318,14 +511,22 @@ class Store:
                 "piece": piece_of(index),
                 "count": counts.get(index, 0),
                 "text": self.tokenizer.decode([index]),
+                "script": piece_script(piece_of(index)),
             }
             for index in range(self.tokenizer.vocab_size)
         ]
         used = sum(1 for item in items if item["count"])
+        # A single character from a foreign script is a slot no English row can
+        # spend. Counting them makes the waste visible instead of a suspicion.
+        foreign_singles = sum(
+            1 for item in items
+            if len(item["piece"].replace("\u2581", "")) == 1 and item["script"] == "foreign"
+        )
         return {
             "size": self.tokenizer.vocab_size,
             "used": used,
             "unused": self.tokenizer.vocab_size - used,
+            "foreign_singles": foreign_singles,
             "source": getattr(self.tokenizer, "model_path", "tokenizer"),
             "items": items,
             "total_tokens": record["total"],
@@ -391,6 +592,12 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/vocab":
                 self.send(store.vocab(one("repo"), one("config"), one("split")))
                 return
+            if parsed.path == "/api/foreign":
+                self.send(store.foreign_scan(one("repo")))
+                return
+            if parsed.path == "/api/tokenizer":
+                self.send(store.select_tokenizer(one("key")))
+                return
             self.send({"error": "not found"}, 404)
         except (LookupError, FileNotFoundError) as error:
             self.send({"error": str(error)}, 404)
@@ -403,17 +610,32 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--state", type=int, default=192)
     parser.add_argument("--query", type=int, default=64)
-    parser.add_argument("--tokenizer", default=None)
+    parser.add_argument(
+        "--tokenizer",
+        default=None,
+        help="start on this tokenizer; every other model found under artifacts is "
+        "still selectable from the page",
+    )
     args = parser.parse_args()
 
-    path = Path(args.tokenizer) if args.tokenizer else DEFAULT_TOKENIZER
-    tokenizer = SentencePieceTokenizer(path) if path.exists() else None
-    if tokenizer is None:
-        print(f"no tokenizer at {path}; token view disabled")
+    explicit = Path(args.tokenizer) if args.tokenizer else None
+    if explicit is not None and not explicit.exists():
+        print(f"no tokenizer at {explicit}")
+        explicit = None
+    entries = discover_tokenizers(explicit)
+    if not entries:
+        print(f"no tokenizer found under {CHECKPOINT_DIR}; token view disabled")
+    else:
+        print(f"tokenizers: {', '.join(entry['label'] for entry in entries)}")
 
-    Handler.store = Store(tokenizer)
+    Handler.store = Store(entries)
     Handler.budgets = {"state": args.state, "query": args.query}
+    store = Handler.store
     print(f"local cache only: { {repo: len(cached_configs(repo)) for repo in REPOS} }")
+    if store.current is not None:
+        entry = store.tokenizers[store.current]
+        print(f"tokenizer: {entry['label']} ({entry['vocab']} pieces, "
+              f"{entry['foreign_singles']} foreign singles)")
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"browsing on http://127.0.0.1:{args.port}")
     try:

@@ -35,10 +35,34 @@ local cache only: {'hotchpotch/s1mb-dataset': 106, 'hotchpotch/bekko-...': 179}
 
 ## Choosing what to look at
 
-The header has a **repository** selector and a **split** selector. Both repos are
-always available, and the split list follows the config you pick: the benchmark
-repo only ships `test`, while the training repo ships `train`, `validation` and
-`test` depending on the config.
+The header has a **repository** selector, a **split** selector, and a
+**tokenizer** selector. Both repos are always available, and the split list
+follows the config you pick: the benchmark repo only ships `test`, while the
+training repo ships `train`, `validation` and `test` depending on the config.
+
+### The tokenizer selector
+
+Every `tokenizer.model` found under `artifacts/` is offered, labelled by its
+directory, with its vocab size and how many foreign single-character pieces it
+holds. A comparison version also shows the description from its `meta.json`:
+
+```
+bekko_tiny · 2,048 pieces · 640 foreign
+s1mb_tiny · 2,048 pieces · 425 foreign
+tokenizer_versions/v0_raw · 2,048 pieces · 735 foreign · no filtering
+tokenizer_versions/v1_strip · 2,048 pieces · script strip only
+tokenizer_versions/v3_floor10 · 2,048 pieces · strip + fold + floor 10
+```
+
+Switching rebuilds the token views and re-counts the vocabulary sheet for the new
+model, so the same config can be compared under two tokenizers without a restart.
+`--tokenizer` only picks which one is selected at startup; the rest stay reachable
+from the page. A `SentencePieceProcessor` lives only as long as the selection, so
+choosing between models does not accumulate them.
+
+This is how the corpus-filtering work is verified by eye: open `codesearch` and
+switch from `v0_raw` to `v3_floor10`. The foreign count goes to 0 and the token
+count for the same 400 cases drops.
 
 Three panes follow: **configs** → **cases** → **one case**.
 
@@ -106,6 +130,36 @@ stray braces and quote fragments, and near-duplicate merges like `intent` next t
 `intent`. A row the data never reaches is a row that never gets a useful gradient,
 which is the concrete form of "26% of a 1M model is embedding".
 
+"Only foreign" narrows to the pieces that are a single character from a script the
+corpus should not contain — the ones `train_tokenizer` strips. They are dead weight
+by construction: no English row can spend them. The sheet shows how many exist and
+the count per piece, which is what makes the case for filtering the corpus rather
+than shrinking the vocabulary.
+
+## The foreign sheet
+
+The **foreign** button scans every cached config in the selected repo and reports
+which ones contain a character this project does not train on — Chinese, Cyrillic,
+Arabic, Hebrew, Thai, emoji — grouped by script.
+
+It exists because "which dataset uses the Cyrillic letters" is not answerable by
+opening configs one at a time. On the training repo:
+
+```
+synthetic_relevance__nanocoir           8 / 250 rows   8,048 chars   cyrillic 8,048
+synthetic_relevance__codesearch        11 / 250 rows     500 chars   cyrillic 329 · cjk 115 · arabic 56
+synthetic_relevance__bge_m3__miracl_en  1 / 250 rows     200 chars   cyrillic 200
+qasper                                 18 / 250 rows   1,256 chars   cjk 873 · cyrillic 150 · arabic 115
+```
+
+Read the shape, not just the size: `nanocoir` carries 8,048 Cyrillic characters on
+**8 of 250 rows**, so it is a few heavily non-English documents rather than a
+pervasive problem. `qasper` spreads its foreign text across 18 rows. The filter box
+matches a config name or a script, so typing `cyrillic` narrows the table. Each
+config is sampled at its first 250 cases — enough to find what a config contains,
+not to measure its exact volume. Both repos are scannable, and S1MB's Cyrillic
+comes from the same `nanocoir` family.
+
 ## The raw tab
 
 The source row, untouched: `state_json`, every decision, every target. When a
@@ -124,5 +178,7 @@ is ours or the dataset's.
 - Every page is addressable:
   `#repo=s1mb-dataset&split=test&config=arc&case=arc:ARC-Challenge:test:27&tab=dec`
   can be pasted into a bug report. Add `vocab=1` to open the sheet.
-- The token view needs a tokenizer. It uses `artifacts/bekko_tiny/tokenizer.model`
-  unless you pass `--tokenizer`. Without one the browser still works and says so.
+- The token view needs a tokenizer. It starts on
+  `artifacts/bekko_tiny/tokenizer.model` unless you pass `--tokenizer`; every other
+  model under `artifacts/` is selectable from the header. Without any model the
+  browser still works and says so.

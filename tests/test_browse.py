@@ -119,3 +119,82 @@ def test_vocab_counts_every_piece_and_marks_the_unused(store):
     state = "short state"
     piece = vocab["items"][ByteTokenizer().encode(state)[0]]
     assert piece["count"] > 0
+
+
+def test_vocab_marks_foreign_single_characters():
+    """The sheet must be able to point at slots no English row can spend."""
+    module = load_browse()
+    assert module.piece_script("联") == "foreign"
+    assert module.piece_script("\u2581联") == "foreign"
+    assert module.piece_script("the") == "ascii"
+    assert module.piece_script("café") == "latin"
+    assert module.piece_script("£") == "latin"
+    assert module.piece_script("\u2581") == "marker"
+
+
+def test_vocab_reports_how_many_foreign_singles_there_are(store):
+    vocab = store.vocab("repo", "cfg", "test")
+    # A byte tokenizer has no foreign single-char pieces at all.
+    assert vocab["foreign_singles"] == 0
+    assert all(item["script"] in {"ascii", "latin", "foreign", "marker"}
+               for item in vocab["items"])
+
+
+def test_meta_lists_a_single_tokenizer_for_a_passthrough_instance(store):
+    """A tokenizer handed straight to Store must show up as one choice."""
+    meta = store.meta()
+    assert [entry["key"] for entry in meta["tokenizers"]] == ["default"]
+    assert meta["tokenizer_key"] == "default"
+    assert meta["tokenizer"] == ByteTokenizer.vocab_size
+
+
+def test_script_of_names_the_script_for_grouping():
+    module = load_browse()
+    assert module.script_of("Ж") == "CYRILLIC"
+    assert module.script_of("联") == "CJK"
+    assert module.script_of("a") == "LATIN"
+
+
+def test_foreign_scan_finds_the_config_that_holds_the_foreign_text():
+    """The scan is what answers "which dataset uses Cyrillic"."""
+    module = load_browse()
+    store = module.Store(ByteTokenizer())
+    store._datasets[("repo", "plain", "train")] = FakeDataset(
+        [row("plain/a", "plain english", "is it true?")]
+    )
+    store._datasets[("repo", "cyrillic", "train")] = FakeDataset(
+        [row("cyr/a", "Москва", "is it true?")]
+    )
+
+    def scan_one(config: str) -> dict:
+        scripts: dict[str, int] = {}
+        rows = store.dataset("repo", config, "train")[0:1]
+        for row_input in rows["input"]:
+            for text in module.foreign_texts(row_input):
+                for char in text:
+                    if module.is_foreign(char):
+                        name = module.script_of(char)
+                        scripts[name] = scripts.get(name, 0) + 1
+        return scripts
+
+    assert scan_one("plain") == {}
+    assert scan_one("cyrillic") == {"CYRILLIC": 6}
+
+
+def test_foreign_texts_covers_state_instructions_and_options():
+    module = load_browse()
+    row_input = {
+        "state_json": json.dumps("the state"),
+        "decisions": [{
+            "id": "d1", "type": "choice",
+            "instructions_json": "pick one",
+            "criteria": [
+                {"id": "a", "description_json": "first option"},
+                {"id": "b", "description_json": "second option"},
+            ],
+        }],
+    }
+    texts = module.foreign_texts(row_input)
+    assert "the state" in texts
+    assert "pick one" in texts
+    assert "first option" in texts and "second option" in texts
