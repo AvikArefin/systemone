@@ -38,8 +38,19 @@ padding.
 length. It is masked out so it cannot affect attention, and its embedding row is
 kept at zero.
 
-**[SEP]** — separator token (ID 1) that marks the boundary between the question
-instructions and the candidate text.
+**[SEP]** — separator token that marks the boundary between the question
+instructions and the candidate text. Read it as `tokenizer.sep_id`, never as a
+literal: the byte tokenizer puts it at ID 1, while SentencePiece reserves ID 1
+for `<unk>` and puts `[SEP]` at ID 2.
+
+**`<unk>`** — the token emitted for a character the vocabulary does not contain.
+A whole run of unknown characters collapses into a single `<unk>`, so text with
+them still encodes, just without detail.
+
+**Tokenizer fingerprint** — a short hash of the vocabulary. Two tokenizers with
+the same `vocab_size` produce tensor-compatible weights that mean different
+things, and loading weights checks shapes only. The fingerprint is what lets a
+checkpoint refuse a vocabulary it was not trained with.
 
 ## Network pieces
 

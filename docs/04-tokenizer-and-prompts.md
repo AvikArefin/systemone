@@ -31,6 +31,269 @@ tokenizer = train_tokenizer(texts, "artifacts/<name>/tokenizer", vocab_size=2048
 `train_tokenizer` writes a corpus file, runs `SentencePieceTrainer` in BPE mode
 with `character_coverage=1.0`, deletes the corpus, and returns the wrapper.
 
+**Fixed: the corpus is filtered before training.** `character_coverage=1.0`
+reserves a vocabulary slot for every distinct character in the corpus, however
+rare, which is the right default for a mixed-language model and the wrong one
+here. The bekko training corpus has 1565 distinct characters; the top ~190 cover
+99.99% of the text. The rest is noise that still costs a slot — stray CJK from
+`open_jev__phone-extraction-control-v1` (`Memo: café / 联系卡`), Chinese song
+titles in `bge-hn-hotpotqa`, Korean and Japanese article titles in `dbpedia` and
+`fineweb`, manga titles in `boolq`, plus emoji (`✅`, `👍`, `😭`) and the invisible
+`\u200d` joiner and `\ufe0f` variation selector.
+
+`train_tokenizer` now runs `strip_foreign` over the corpus, which drops
+characters from `FOREIGN_SCRIPTS` and from `EMOJI_RANGES`. Coverage stays at 1.0.
+Measured over 148 cached bekko configs (51,619 cases, 552,862 texts):
+
+| | raw corpus | stripped corpus |
+|---|---|---|
+| single-char pieces | 1,170 | 451 |
+| of those, foreign or emoji | 727 | **0** |
+| tokens per character | 0.3680 | 0.3208 |
+
+That is 719 freed embedding rows and 12.8% fewer tokens, with no `<unk>` on
+held-out English text.
+
+**What the strip does and does not touch.** It edits the *tokenizer's* copy of the
+text, nothing else. **No training or eval row is dropped** — the filter runs on
+the corpus file written for `SentencePieceTrainer`, so `load_bekko_train` and
+`load_s1mb` are unaffected and every case still trains and evaluates. Measured on
+44,128 sampled training rows and 10,566 S1MB eval rows:
+
+| | training | eval |
+|---|---|---|
+| rows dropped | 0 | 0 |
+| rows containing a foreign char or emoji | 1.56% | ~3.2% |
+| ...of which CJK/kana/Hangul | 1.15% | — |
+| ...of which emoji/symbol | 0.11% | — |
+| rows that now emit an `<unk>` | 1.61% | — |
+| `<unk>` tokens as share of all tokens | 0.011% | 0.03% |
+| tokens | −12.21% | −12.75% |
+
+The catch is that a stripped character becomes `<unk>` rather than being cleanly
+removed: a run of foreign text collapses to a single `<unk>`, which is why the
+token count falls and the unknown rate rises together. That is the intended
+trade — a `<unk>` on a disclaimer nobody can use costs one row of embedding,
+where the individual characters cost 700.
+
+Two things this does *not* break. Choice groups whose options collapse to
+identical encodings: 6 exist on S1MB and **all 6 predate this change** — they are
+duplicated option text in `hh_rlhf`, not a tokenizer artifact. The strip
+introduces none. And `aqua_rat`, whose decisions carry `√`, `≤`, `π`: those stay
+real tokens.
+
+**Second pass: accents fold unconditionally, then rare characters are policed.**
+Script filtering cannot express "rare", so it kept every Latin accent and every
+Greek letter. Two separate rules were needed, and getting them in the right order
+mattered.
+
+*Rule 1 — folding has nothing to do with frequency.* `é` and `e` are the same
+letter. Whether one appears 68,841 times or twice says nothing about whether it
+merits its own vocabulary slot. The first version of this gated folding on the
+frequency floor, which left **298 accented letters** — `ý` (812 uses), `é`
+(68,841), `ü` (59,766), `ö` (52,928) — sitting in the vocabulary beside their
+ASCII bases: two slots and two embedding rows for one letter. Folding now runs
+first and unconditionally.
+
+*Rule 1a — compose before folding.* Scraped and email text arrives decomposed:
+`e` + U+0301 rather than `é`. Folding cannot see that pair — `e` is ASCII and
+U+0301 has no base letter — so it passed through, and SentencePiece's own NFKC
+pass recomposed it into `é`, putting the accented letter straight back into the
+vocabulary. `prune_rare` now normalises to **NFC** first, so folding sees a real
+`é`. NFC rather than NFKC: NFKC would also expand `ﬁ` → `fi` and `⅓` → `1⁄3`,
+changing text the filter has no business touching. With this, the cleaned corpus
+yields 61 non-ASCII letters after NFKC instead of 121, and none of them are
+accented Latin.
+
+*Rule 2 — whatever is still non-ASCII and rare is resolved, not ignored.* The
+second pass only sees characters that folding could not remove, and gives each one
+an explicit outcome:
+
+| case | example | outcome |
+|---|---|---|
+| invisible character | `\u200c`, `\u0304` | dropped — renders as nothing |
+| currency | `¥`, `₱` | **kept** — money must stay readable |
+| maths notation | `∑`, `∩`, `←`, `√` | **kept** — no alternative spelling |
+| anything else | `■`, `【`, `⅓`, `ἀ`, `ɜ` | **dropped** |
+
+The early version had no fourth row: a symbol with no base letter fell through
+untouched, so `■`, `【`, `《`, `⅓` and bare Greek (`ἀ`, `ὀ`, `ὁ`) kept slots
+forever at any threshold.
+
+**Folding is safe, measured.** The risk is not token count but collisions — two
+distinct strings becoming identical. Across 44,065 choice groups in the training
+corpus and 20,484 in S1MB, folding merges **zero** options. The merges that do
+happen are exactly the intended ones: `León`/`Léon` → `Leon`, `für`/`fur`,
+`Coöperatieve` → `Cooperatieve`, `Frédéric` → `Frederic`.
+
+Threshold 10 then applies to what is left. The band between 3 and 9 holds 85
+characters and almost none are English — `ě`, `ą`, `ṃ`, `ɜ`, `ʲ`, stray Greek.
+Dropping them costs nothing measurable.
+
+**A new vocabulary invalidates the weights, and now says so.** Retraining the
+tokenizer leaves every checkpoint trained against the old one meaningless, and
+`load_state_dict` cannot tell — it compares tensor shapes, and 2048 rows is 2048
+rows whichever pieces they represent. `save_checkpoint` writes a
+`tokenizer_fingerprint` into `model.pt` and `train()` stamps one into
+`training_state.pt`; both are checked on load, so a swapped vocabulary raises
+`VocabMismatch` instead of training on silently relabelled tokens. Details in the
+[data pipeline](05-data-pipeline.md#the-same-fingerprint-guards-the-weights).
+
+## Open question: the vocabulary is badly shaped for English prose
+
+The character filters above control which *characters* get slots. They say nothing
+about whether the *multi-character* pieces are the right ones, and there the
+vocabulary is clearly wrong. An `aegis2` document encodes as:
+
+```
+·do|ct|or   ·le|g|al   ·c|ann|ab|is   ·ha|v|ing   ·f|ri|end   ·n|at|ur|ally
+```
+
+That is `doctor` in three pieces, `legal` in three, `cannabis` in four. Meanwhile
+the vocab holds whole pieces for words that only appear in rubrics:
+
+```
+·instructions  ·identification  ·interpretations  ·probabilities  ·contradiction
+```
+
+Both facts have the same cause: **the training corpus is not a sample of the text
+the model reads.**
+
+`collect_texts` emits one string per *typed example*, and a choice case with 8
+options becomes 8 examples that share one state and one instruction. Measured over
+148 configs:
+
+| | count |
+|---|---|
+| texts emitted | 552,862 |
+| distinct texts | 71,917 |
+| duplicates | 480,945 (**87.0%**) |
+| distinct instruction strings | 3,398 |
+| instruction emissions | 118,223 (97.1% redundant) |
+
+So BPE's merge budget — which is driven by frequency — goes to whatever repeats
+hardest. A single score-level description
+(`"4.0: A direct and sufficient answer for the intended subject"`) is fed in
+**7,600 times**. Rubric vocabulary is therefore cheap to merge into whole pieces,
+while `doctor`, which appears in documents, is not.
+
+The composition is 74.7% state text, 18.1% instructions, 7.2% options by
+character — but by *frequency* the instructions are dramatically over-represented
+relative to how varied they are.
+
+**Measured effect of deduplicating** (same hyperparameters, same filters):
+
+| corpus | distinct texts | `doctor` | whole sample words | document tokens |
+|---|---|---|---|---|
+| all 552,862 (current) | 552,862 | 3 pieces | 3/17 | 44 |
+| deduplicated | 71,917 | 3 pieces | 6/17 | **38** |
+
+Deduping cuts the corpus by 76.5% and *improves* document encoding by 14%.
+Training only on states does better still — 11/22 whole words, 40 tokens — but
+drops instruction text the model also has to read, so it is not obviously correct.
+
+Not fixed here, because it changes what the tokenizer is optimised for and that is
+a design decision: dedupe the corpus, weight states higher, or keep the current
+mix. The character filters are orthogonal and stack with any of them.
+
+**Where the 2048 slots actually go** (measured on `v3_floor10`):
+
+| | count |
+|---|---|
+| single-character pieces | 283 |
+| ...of which non-ASCII | 116 |
+| single-character pieces that are ASCII | 167 |
+| extra slots held by case variants (e.g. `▁the`, `▁The`, `▁THE`) | 153 |
+
+The 167 ASCII single-character pieces are unavoidable — English needs its
+alphabet. The 116 non-ASCII break down as:
+
+| what | count | examples |
+|---|---|---|
+| reserved currency and maths | 30 | `£ ¥ € ∑ √ ∞ ≤ π σ Δ` |
+| typography and symbols | 27 | `’ “ ” — – © ® § °` |
+| IPA / phonetic | 24 | `ˈ ɛ ɪ ʃ ə ɹ ʒ` |
+| Greek | 16 | `ι κ τ ς ε γ ο ρ` |
+| accented or special Latin | 12 | `ı ł æ ð ø Þ ŋ ß Ø Đ` |
+| invisible / combining | 6 | `\u0303 \u0301 \u0308 \u0323` |
+| other | 1 | `ー` |
+
+Only the top row is deliberate. The IPA is pronunciation notation from
+`helpsteer2`; the Greek is mostly maths that never grew into a merged piece, but
+16 real Greek letters remain. The 12 accented Latin have no base letter to fold
+to (`æ`, `ø`, `ß`, `Þ` are distinct letters, not decorated `a`, `o`, `s`, `T`).
+The 6 combining marks survive the fold because they sit above the floor and
+attached to characters NFC cannot compose. At 116 slots this is no longer the
+main cost — the 153 case-variant slots are — but it is not "deliberate
+reservation" either, and the frequency floor cannot remove what appears more than
+10 times.
+
+## Why building a tokenizer is slow
+
+`SentencePieceTrainer.train` itself takes **1.3 seconds** on this corpus. The
+build takes minutes because of what happens around it:
+
+| stage | time |
+|---|---|
+| list cached configs | 4.6s |
+| load datasets from HF cache and parse | **444s** |
+| collect_texts | 0.03s |
+| join into one string | 0.15s |
+| clean_corpus (strip + fold + floor) | 26.8s |
+| write corpus file (197 MB) | 0.17s |
+| **SentencePieceTrainer.train** | **1.33s** |
+
+The trainer is not slow. Loading 148 datasets from parquet and parsing 118,223
+decisions into typed objects is 97% of the wall clock, and it happens *before*
+`train_tokenizer` is called. If the corpus is already in memory, rebuilding the
+BPE model is a two-second operation — so the fix for a slow rebuild is to cache
+the corpus, not to touch the trainer.
+
+One real inefficiency was in the fold pass: it called `fold_char` (which runs
+`unicodedata.normalize`) once per character, 89s over 196M characters. It now
+builds a translation table once from the corpus alphabet and uses
+`str.translate`, which is **14.8× faster at 6.0s** and byte-identical.
+
+Sweep, on the same corpus (552,862 texts, 196M characters, 1,565 distinct):
+
+| threshold | chars kept | vocab single-char pieces |
+|---|---|---|
+| 1 (off) | 486 | 369 |
+| 3 | 396 | 323 |
+| 5 | 361 | 301 |
+| **10** | **311** | **~262** |
+
+**Symbols get a separate mechanism, because frequency is not enough.** `∑` and `∩`
+both occur exactly twice, yet the final vocabulary cut kept `∩` and dropped `∑` —
+BPE merges decide which candidates survive, and corpus text cannot control that.
+`MATHS_SYMBOLS` and `CURRENCY_SYMBOLS` are therefore passed to SentencePiece as
+`user_defined_symbols`, which guarantees a piece regardless of frequency.
+`reserved_symbols()` narrows the list to symbols actually present, since reserving
+an absent one spends a slot the data never reaches.
+
+Measured over the full corpus, the filter changes 239 of 552,862 texts (0.04%) and
+**no text becomes empty**.
+
+Four versions are built for comparison under `artifacts/tokenizer_versions/`:
+
+| version | what it is |
+|---|---|
+| `v0_raw` | no filtering |
+| `v1_strip` | script strip only — the previous shipped behaviour |
+| `v2_floor3` | strip + frequency floor 3 |
+| `v3_floor10` | strip + unconditional fold + floor 10 |
+
+Lowering `character_coverage` instead was the obvious fix and the wrong one.
+It is a percentile, not a filter: at 0.9995 it also discarded `Z`, `Q`, `é`, `£`
+and `–`, which English rows do use. Filtering only the foreign scripts removes
+the same slots and keeps every character the corpus legitimately needs. The
+filter deliberately keeps accented Latin, typography (`—`, curly quotes), and
+math symbols (`→`, `≤`, `∞`, `√`) — `aqua_rat` and the relevance rows need those,
+and they are not emoji despite sitting in the same Unicode neighbourhood.
+
+Models for side-by-side comparison: four versions under
+`artifacts/tokenizer_versions/` (see the table above).
+
 Fixed IDs shared by both tokenizers:
 
 | ID | `ByteTokenizer` | `SentencePieceTokenizer` |
