@@ -6,7 +6,7 @@ in train. A normalized content fingerprint finds it, and a per-config share
 guard keeps shared templates (where many rows legitimately share one short
 state) from being dropped along with the real duplicates.
 
-Writes `artifacts/benchmark_duplicates.json`, a `{config: [case_id]}` map.
+Writes `artifacts/test_duplicates.json`, a `{config: [case_id]}` map.
 """
 
 import json
@@ -18,7 +18,7 @@ from systemone.corpus import test_configs
 from systemone.decontamination import find_test_duplicates, write_blocklist
 
 OUT = Path(
-    os.environ.get("SYSTEMONE_BLOCKLIST", "artifacts/benchmark_duplicates.json")
+    os.environ.get("SYSTEMONE_BLOCKLIST", "artifacts/test_duplicates.json")
 )
 
 

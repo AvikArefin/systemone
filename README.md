@@ -31,6 +31,7 @@ scripts/
   train_comparison.py       train on the benchmark test split (comparison only)
   train_legacy.py           train on JevBench (superseded)
   train_synthetic.py        small synthetic task, end-to-end
+  eval.py                   score a checkpoint on the test split
   smoke.py        construction/inference sanity check
 ```
 

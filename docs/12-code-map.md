@@ -37,11 +37,15 @@ Every file, what it does, and where to look when you want to change something.
 | [`measure_budget.py`](../scripts/measure_budget.py) | Measure what each query budget preserves on the test split, per decision kind | minutes |
 | [`measure_state_budget.py`](../scripts/measure_state_budget.py) | Score a checkpoint at several state/query budgets, whole split and on the rows the cap cut | 5 – 30 min |
 | [`measure_attention_memory.py`](../scripts/measure_attention_memory.py) | Mask tensor size and attention time per mask strategy | seconds |
+| [`eval.py`](../scripts/eval.py) | Baseline-adjusted Task Avg on the test split | minutes |
+| [`build_tokenizers.py`](../scripts/build_tokenizers.py) | Rebuild and measure comparison tokenizers | minutes |
+| [`build_blocklist.py`](../scripts/build_blocklist.py) | Scan train for test duplicates and write the blocklist | one full pass over train |
+| [`browse.py`](../scripts/browse.py) | Local browser for cached rows, prompts and tokens | instant |
 
 ## The data flow, end to end
 
 ```
-HF dataset  (input.state_json, input.decisions, targets)
+bekko (HF dataset: input.state_json, input.decisions, targets)
     │  load_typed_decisions → parse_decision
     ▼
 Example(state, question, label, distribution, benchmark, ids, values)

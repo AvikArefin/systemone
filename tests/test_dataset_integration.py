@@ -37,7 +37,7 @@ def tokenizer():
     return SentencePieceTokenizer(CKPT)
 
 
-def test_test_split_has_the_documented_shape():
+def test_evaluation_split_has_the_documented_shape():
     grouped = load_test(["aegis2", "arc"], seed=0)
     assert grouped, "loader returned nothing"
     examples = [e for case in grouped.values() for e in case]
@@ -143,7 +143,7 @@ def test_train_split_loads():
     assert examples
 
 
-def test_test_configs_returns_the_evaluation_roster():
+def test_evaluation_roster_has_106_configs():
     assert len(eval_roster()) == 106
 
 
