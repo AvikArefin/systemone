@@ -105,6 +105,7 @@
   .kind.noul { background: var(--fit-soft); border-color: #c2dccb; color: var(--fit); }
   .kind.choice { background: var(--gold-soft); border-color: #e7d79a; color: var(--gold); }
   .kind.score { background: #eee4f0; border-color: #d8c7dd; color: #6d4a78; }
+  .kind.ranking { background: #e7eef3; border-color: #c5d6e0; color: #3f6478; }
 
   .pill { font-size: 11px; padding: 2px 6px; border-radius: 999px; }
   .pill.ok { background: var(--fit-soft); color: var(--fit); }
@@ -176,14 +177,9 @@
   .bar i { display: block; height: 100%; background: var(--gold); }
   .prob { font: 11px var(--mono); color: var(--ink-faint); text-align: right; padding-top: 2px; }
 
-  details.query { margin-top: 6px; }
-  details.query summary {
-    font: 11px var(--mono); color: var(--ink-soft); cursor: pointer; list-style: none;
-  }
-  details.query summary::-webkit-details-marker { display: none; }
-  details.query summary::before { content: "▸ "; color: var(--ink-faint); }
-  details.query[open] summary::before { content: "▾ "; }
-  details.query .tokens { margin-top: 6px; padding: 8px; }
+  .token-row { margin-bottom: 10px; }
+  .token-row .label { font: 11px var(--mono); color: var(--ink-soft); margin-bottom: 5px; }
+  .token-row .tokens { padding: 8px; }
 
   pre.raw {
     background: #2b2822; color: #efe9dd; border-radius: 9px; padding: 14px;
@@ -371,7 +367,7 @@ const plural = (count, one, many = `${one}s`) => `${num(count)} ${count === 1 ? 
 const state = {
   repos: [], repo: null, split: null, configs: [], config: null,
   cases: [], total: 0, offset: 0, filter: "", configFilter: "",
-  selected: null, detail: null, tab: "doc", tokens: true,
+  selected: null, detail: null, tab: "doc", tokens: true, decTokens: false,
   stateBudget: 192, queryBudget: 64, loading: false,
   vocab: null, vocabFilter: "", vocabSort: "count", vocabUnused: false,
   vocabForeign: false,
@@ -589,14 +585,47 @@ function renderDoc(detail) {
   return controls + body;
 }
 
+function decisionRows(block) {
+  return (block.kind === "noul" ? block.rows : block.options).filter((row) => row.query);
+}
+
 function renderDecisions(detail) {
   if (!detail.decisions.length) return '<p class="empty">This case has no decisions.</p>';
-  return detail.decisions.map((block) => {
+  const anyTokens = detail.decisions.some((block) => decisionRows(block).length);
+  const controls = anyTokens ? `
+    <div class="viewbar">
+      <button class="toggle" id="toggle-tokens" aria-pressed="${state.decTokens}">
+        ${state.decTokens ? "show text" : "show tokens"}
+      </button>
+      <span class="note">${plural(detail.decisions.length, "decision")} ·
+        query budget ${num(detail.budget.query)} tokens</span>
+    </div>` : "";
+  const tokens = state.decTokens && anyTokens;
+  return controls + detail.decisions.map((block) => {
     if (block.reason) {
       return `<article class="decision">
         <header><span class="kind">${esc(block.kind)}</span>
         <span class="pill over">${esc(block.reason)}</span></header></article>`;
     }
+    const header = `<header>
+        <span class="kind ${esc(block.kind)}">${esc(block.kind)}</span>
+        ${fitPill(block)}
+        ${block.scoring ? `<span class="chip">${esc(block.scoring)}</span>` : ""}
+        <span class="chip">${num(block.instruction_tokens)} instruction tokens</span>
+      </header>`;
+
+    const rows = decisionRows(block);
+    if (tokens && rows.length) {
+      return `<article class="decision">${header}${rows.map((row, index) => `
+        <div class="token-row">
+          <div class="label">${block.kind === "noul" ? "row" : `option ${index + 1}`}
+            · ${num(row.query.total - row.query.dropped)}/${num(row.query.total)} tokens
+            ${row.query.dropped ? `<span class="pill over">cut ${num(row.query.dropped)}</span>` : ""}
+          </div>
+          ${tokenView(row.query)}
+        </div>`).join("")}</article>`;
+    }
+
     const options = block.kind === "noul"
       ? `<div class="answer ${block.rows[0].gold ? "gold" : ""}">
            label <strong>${block.rows[0].gold}</strong>
@@ -613,23 +642,10 @@ function renderDecisions(detail) {
           <span class="prob">${option.probability != null ? Number(option.probability).toFixed(3) : ""}</span>
         </div>`).join("");
 
-    const rows = (block.kind === "noul" ? block.rows : block.options)
-      .filter((row) => row.query).map((row, index) => `
-        <details class="query"><summary>
-          ${block.kind === "noul" ? "row" : `option ${index + 1}`}
-          · query ${num(row.query.total - row.query.dropped)}/${num(row.query.total)} tokens
-          ${row.query.dropped ? `<span class="pill over">cut ${num(row.query.dropped)}</span>` : ""}
-        </summary>${tokenView(row.query)}</details>`).join("");
-
     return `<article class="decision">
-      <header>
-        <span class="kind ${esc(block.kind)}">${esc(block.kind)}</span>
-        ${fitPill(block)}
-        <span class="chip">${num(block.instruction_tokens)} instruction tokens</span>
-      </header>
+      ${header}
       <p class="q">${esc(block.instructions)}</p>
       ${options}
-      ${rows}
     </article>`;
   }).join("");
 }
@@ -780,7 +796,9 @@ document.addEventListener("click", (event) => {
   if (tab) { state.tab = tab.dataset.tab; renderDetail(); syncHash(); return; }
   if (event.target.closest("#more")) { loadPage(); return; }
   if (event.target.closest("#toggle-tokens")) {
-    state.tokens = !state.tokens; renderDetail(); return;
+    if (state.tab === "dec") state.decTokens = !state.decTokens;
+    else state.tokens = !state.tokens;
+    renderDetail(); return;
   }
   if (event.target.closest("#vocab-button")) { openVocab(); return; }
   if (event.target.closest("#foreign-button")) { openForeign(); return; }
@@ -913,7 +931,9 @@ document.addEventListener("keydown", (event) => {
     state.tab = ["doc", "dec", "raw"][Number(event.key) - 1];
     renderDetail();
   } else if (event.key === "t" && state.detail) {
-    state.tokens = !state.tokens; renderDetail();
+    if (state.tab === "dec") state.decTokens = !state.decTokens;
+    else state.tokens = !state.tokens;
+    renderDetail();
   }
 });
 

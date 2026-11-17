@@ -118,6 +118,8 @@ def foreign_texts(row_input: dict) -> list[str]:
         texts.append(plain(decision.get("instructions_json")))
         for criterion in decision.get("criteria") or []:
             texts.append(plain(criterion.get("description_json")))
+        for document in decision.get("documents") or []:
+            texts.append(plain(document.get("content_json")))
     return texts
 
 
@@ -282,19 +284,35 @@ class Store:
             "tokenizer_key": self.current,
         }
 
-    def tokens(self, ids: list[int], budget: int) -> dict:
+    def tokens(self, ids: list[int], budget: int, total: int | None = None) -> dict:
+        """Describe a token view; `total` is the length before any truncation.
+
+        Prompt rows arrive already cut to the budget (`_render` truncates each
+        segment), so `len(ids)` no longer says how much text there was. Passing
+        the original count keeps the missed-token number and `fits` honest.
+        """
         head, tail = head_tail_split(len(ids), budget)
+        full = len(ids) if total is None else total
         decode = self.tokenizer.decode
         return {
-            "total": len(ids),
+            "total": full,
             "budget": budget,
             "head": head,
             "tail": tail,
-            "dropped": max(0, len(ids) - head - tail),
+            "dropped": max(0, full - head - tail),
             "head_tokens": [decode([i]) for i in ids[:head]],
             "tail_tokens": [decode([i]) for i in ids[-tail:]] if tail else [],
             "ids": ids[:head] + (ids[-tail:] if tail else []),
         }
+
+    def row_tokens(
+        self, instructions: str, candidate: str | None, ids: list[int], budget: int
+    ) -> dict:
+        """Token view for a prompt row, with its pre-truncation length restored."""
+        total = len(self.tokenizer.encode(instructions))
+        if candidate is not None:
+            total += 1 + len(self.tokenizer.encode(candidate))  # separator
+        return self.tokens(ids, budget, total=total)
 
     def foreign_scan(self, repo: str) -> dict:
         """Which configs contain foreign characters, and which script.
@@ -356,7 +374,10 @@ class Store:
         items = []
         for position, source in enumerate(window):
             decisions = rows["input"][position]["decisions"]
-            kinds = Counter(decision.get("type") or "unsupported" for decision in decisions)
+            kinds = Counter(
+                decision.get("type") or decision.get("kind") or "unknown"
+                for decision in decisions
+            )
             items.append(
                 {
                     "case_id": ids[source],
@@ -412,7 +433,7 @@ class Store:
 
         block = {
             "id": decision.get("id"),
-            "kind": decision.get("type") or "unsupported",
+            "kind": decision.get("type") or decision.get("kind") or "unknown",
             "reason": None,
             "instructions": None,
             "options": [],
@@ -422,6 +443,10 @@ class Store:
         if target is None:
             block["reason"] = "no target row"
             return block
+        if decision.get("type") is None and (
+            decision.get("kind") == "ranking" or decision.get("documents")
+        ):
+            return self.ranking_block(decision, target, block)
         example = parse_decision(
             state, decision, target, None, random.Random(0), benchmark=config, shuffle=False
         )
@@ -438,8 +463,11 @@ class Store:
         if isinstance(question, Noul):
             rendered = {"text": None, "gold": example.label}
             if self.tokenizer is not None:
-                rendered["query"] = self.tokens(
-                    noul_query(self.tokenizer, question, query_budget), query_budget
+                rendered["query"] = self.row_tokens(
+                    question.instructions,
+                    None,
+                    noul_query(self.tokenizer, question, query_budget),
+                    query_budget,
                 )
                 block["fits"] = block["fits"] and rendered["query"]["dropped"] == 0
             block["distribution"] = list(example.distribution or [])
@@ -465,19 +493,54 @@ class Store:
                     if isinstance(question, Choice)
                     else score_query(self.tokenizer, question, criterion, query_budget)
                 )
-                option["query"] = self.tokens(render, query_budget)
+                option["query"] = self.row_tokens(
+                    question.instructions, criterion, render, query_budget
+                )
                 option["fit"] = option["query"]["dropped"] == 0
                 block["fits"] = block["fits"] and option["fit"]
             block["options"].append(option)
         block["label_index"] = gold_index
         return block
 
+    def ranking_block(self, decision, target, block: dict) -> dict:
+        """Show a `ranking` decision from its documents, not from the parser.
+
+        The training parser drops these because the model has no ranking head,
+        but the browser is a data viewer: `arxiv` and `agnews` are one ranking
+        decision per case, so calling them "unsupported" hid entire configs.
+        """
+        block["instructions"] = plain(decision.get("instructions_json"))
+        block["scoring"] = decision.get("scoring")
+        weights = dict(zip(target.get("ids") or [], target.get("probabilities") or []))
+        for position, document in enumerate(decision.get("documents") or []):
+            document_id = document.get("id")
+            probability = weights.get(document_id)
+            block["options"].append(
+                {
+                    "index": position,
+                    "id": document_id,
+                    "text": plain(document.get("content_json")),
+                    "gold": bool(probability),
+                    "probability": probability,
+                }
+            )
+        if block["options"]:
+            block["label_index"] = max(
+                range(len(block["options"])),
+                key=lambda index: block["options"][index]["probability"] or 0.0,
+            )
+        if self.tokenizer is not None:
+            block["instruction_tokens"] = len(
+                self.tokenizer.encode(block["instructions"])
+            )
+        return block
+
     def vocab(self, repo, config, split) -> dict:
         """Every piece in the vocabulary, with how often this config uses it.
 
         Counts come from the first VOCAB_CASE_CAP cases: state text plus
-        instructions and option texts, which is where the tokenizer is exercised.
-        Enough to spot pieces that never fire at all.
+        instructions, options and ranking documents, which is where the
+        tokenizer is exercised. Enough to spot pieces that never fire at all.
         """
         if self.tokenizer is None:
             raise LookupError("no tokenizer loaded, so there is no vocabulary to show")
@@ -494,6 +557,10 @@ class Store:
                     for criterion in decision.get("criteria") or []:
                         counts.update(
                             self.tokenizer.encode(plain(criterion.get("description_json")))
+                        )
+                    for document in decision.get("documents") or []:
+                        counts.update(
+                            self.tokenizer.encode(plain(document.get("content_json")))
                         )
             self._counts[key] = {
                 "counts": counts,

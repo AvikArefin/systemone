@@ -98,10 +98,24 @@ them — including the label definitions for `noul`, which the dataset supplies 
 which are easy to lose — the options with the gold one highlighted, the target
 probabilities as bars, and the instruction token count.
 
-Every row is expandable to show the tokens it actually gets. Rows are budgeted
-separately from the document, and the candidate is protected: the instructions
-absorb the truncation, so a long option is never the thing that gets cut. A row
-whose instructions are 357 tokens and whose budget is 64 says so plainly.
+`ranking` decisions look different because they have no `type` and no `criteria`:
+their candidates live in `documents`. The card lists those documents as options,
+marks the positive one, and shows the `scoring` mode. The browser reads them
+straight from the row because the training parser drops them — `arxiv` and
+`agnews` are one ranking decision per case, so hiding them as "unsupported" hid
+the whole config. Nothing here changes training; the model still has no ranking
+head.
+
+The **show tokens** button, or `t`, is the same control as on the document tab.
+It swaps the whole tab to the tokens each row actually gets — one group per
+option, or the single row for `noul` — labelled with its token count and any
+truncation. Press it again to return to instructions and options. Rows are
+budgeted separately from the document, and the candidate is protected: the
+instructions absorb the truncation, so a long option is never the thing that
+gets cut. A row whose instructions are 357 tokens and whose budget is 64 says so
+plainly: the label reads `64/357`, and the token strip ends with a red
+`⋯ 293 tokens dropped ⋯` marker so the missed count sits with the tokens.
+Ranking decisions have no query tokens, so they stay in text form.
 
 ## The vocabulary sheet
 

@@ -60,6 +60,32 @@ def row(case_id: str, state: str, instructions: str) -> dict:
     }
 
 
+def ranking_row(case_id: str, state: str) -> dict:
+    return {
+        "case_id": case_id,
+        "input": {
+            "state_json": json.dumps(state),
+            "decisions": [
+                {
+                    "id": "rank",
+                    "kind": "ranking",
+                    "type": None,
+                    "instructions_json": json.dumps("rank these"),
+                    "criteria": [],
+                    "documents": [
+                        {"id": "0", "content_json": json.dumps("first document")},
+                        {"id": "1", "content_json": json.dumps("second document")},
+                    ],
+                    "scoring": "relative",
+                }
+            ],
+        },
+        "targets": [
+            {"decision_id": "rank", "ids": ["0", "1"], "probabilities": [0.0, 1.0]}
+        ],
+    }
+
+
 @pytest.fixture()
 def store():
     module = load_browse()
@@ -99,6 +125,25 @@ def test_case_reports_truncation(store):
     assert long["state_tokens"]["head"] + long["state_tokens"]["tail"] == 16
 
 
+def test_query_rows_report_the_tokens_that_do_not_fit():
+    """The prompt renderer cuts the row first, so the view must restore the length."""
+    module = load_browse()
+    store = module.Store(ByteTokenizer())
+    long = " ".join(["word"] * 100)
+    store._datasets[("repo", "cfg", "test")] = FakeDataset(
+        [row("cfg/long", "s", long)]
+    )
+
+    case = store.case("repo", "cfg", "test", "cfg/long", 192, 16)
+    block = case["decisions"][0]
+    query = block["rows"][0]["query"]
+    assert query["total"] > query["budget"]
+    assert query["dropped"] == query["total"] - query["budget"]
+    assert query["head"] + query["tail"] + query["dropped"] == query["total"]
+    assert block["fits"] is False
+    assert case["fits"] is False
+
+
 def test_case_carries_the_decision_content(store):
     case = store.case("repo", "cfg", "test", "cfg/a", 192, 64)
     decision = case["decisions"][0]
@@ -106,6 +151,49 @@ def test_case_carries_the_decision_content(store):
     assert decision["label"] is True
     assert decision["distribution"] == [0.7]
     assert decision["rows"][0]["query"]["total"] > 0
+
+
+def test_ranking_decisions_show_their_documents():
+    """`agnews` and `arxiv` rank, they do not judge; the browser must still show them."""
+    module = load_browse()
+    store = module.Store(ByteTokenizer())
+    store._datasets[("repo", "agnews", "train")] = FakeDataset(
+        [ranking_row("agnews/a", "headline")]
+    )
+
+    page = store.page("repo", "agnews", "train", 0, 10, "", "")
+    assert page["items"][0]["kinds"] == {"ranking": 1}
+
+    case = store.case("repo", "agnews", "train", "agnews/a", 192, 64)
+    block = case["decisions"][0]
+    assert block["kind"] == "ranking"
+    assert block["reason"] is None
+    assert block["instructions"] == "rank these"
+    assert block["scoring"] == "relative"
+    assert [option["text"] for option in block["options"]] == [
+        "first document",
+        "second document",
+    ]
+    assert [option["gold"] for option in block["options"]] == [False, True]
+    assert block["options"][1]["probability"] == 1.0
+    assert block["label_index"] == 1
+    assert block["fits"] is True
+
+
+def test_ranking_documents_are_counted_as_text():
+    """Ranking text lives in `documents`, so it must reach the scans and counts."""
+    module = load_browse()
+    row_input = ranking_row("agnews/a", "headline")["input"]
+    texts = module.foreign_texts(row_input)
+    assert "first document" in texts and "second document" in texts
+
+    store = module.Store(ByteTokenizer())
+    store._datasets[("repo", "agnews", "train")] = FakeDataset(
+        [ranking_row("agnews/a", "headline")]
+    )
+    vocab = store.vocab("repo", "agnews", "train")
+    piece = vocab["items"][ByteTokenizer().encode("f")[0]]
+    assert piece["count"] > 0, "the 'f' only appears in the ranking documents"
 
 
 def test_vocab_counts_every_piece_and_marks_the_unused(store):

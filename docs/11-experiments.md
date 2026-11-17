@@ -578,8 +578,12 @@ point, and it is now measurable — which it was not before.
 The bekko corpus contains a fourth decision type, `ranking`, which has
 `type: null`, no `criteria`, and its candidates in `documents`. The parser drops
 every one — `agnews` alone is 19,992 decisions, an entire subset. `S1MB` contains
-no `ranking` decisions, so scores are unaffected; this is training data left on the
-table. The drop warning now names it (`unsupported:ranking`) instead of printing
+no `ranking` decisions, so scores are unaffected; this is training data left on
+the table. The drop warning now names it (`unsupported:ranking`) instead of printing
 an opaque `None`.
+
+The data browser is no longer limited by the parser: it renders ranking decisions
+from `documents` and marks the positive candidate, so `arxiv` and `agnews` can be
+inspected. That is display only — training still discards them.
 
 Next: [Code map →](12-code-map.md)
