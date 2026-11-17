@@ -1,4 +1,3 @@
-import hashlib
 import itertools
 import json
 from dataclasses import dataclass
@@ -11,6 +10,7 @@ from torch import Tensor
 from torch.nn.utils.rnn import pad_sequence
 
 from .config import ModelConfig
+from .fingerprint import fingerprint
 from .prompt import choice_query, noul_query, score_query
 from .schema import Choice, Noul, Question, Score
 from .tokenizer import Tokenizer, truncate_head_tail
@@ -146,18 +146,6 @@ def _flatten(sequences: Sequence[Sequence[int]]) -> tuple[Tensor, Tensor]:
     return flat, offsets
 
 
-def _fingerprint(tokenizer: Tokenizer) -> str:
-    digest = hashlib.sha256()
-    model_path = getattr(tokenizer, "model_path", None)
-    if model_path and Path(model_path).exists():
-        digest.update(Path(model_path).read_bytes())
-    else:
-        probe = "the quick brown fox jumps over the lazy dog 0123456789 \u241f"
-        digest.update(str(tokenizer.vocab_size).encode())
-        digest.update(repr(tokenizer.encode(probe * 8)).encode())
-    return digest.hexdigest()[:16]
-
-
 CACHE_VERSION = 2
 
 
@@ -267,7 +255,7 @@ class EncodedSet:
             vocab_size=tokenizer.vocab_size,
             max_state_tokens=cfg.max_state_tokens,
             max_query_tokens=cfg.max_query_tokens,
-            fingerprint=_fingerprint(tokenizer),
+            fingerprint=fingerprint(tokenizer),
             benchmarks=benchmarks,
             candidate_ids=candidate_ids,
             values=values,
@@ -282,7 +270,7 @@ class EncodedSet:
             and self.pad_id == tokenizer.pad_id
             and self.max_state_tokens == cfg.max_state_tokens
             and self.max_query_tokens == cfg.max_query_tokens
-            and getattr(self, "fingerprint", "") == _fingerprint(tokenizer)
+            and getattr(self, "fingerprint", "") == fingerprint(tokenizer)
         )
 
     def save(self, path: str | Path) -> None:

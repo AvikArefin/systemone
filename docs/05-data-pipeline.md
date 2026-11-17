@@ -124,6 +124,31 @@ chars. This closes a nasty failure mode — retraining the tokenizer with the sa
 `vocab_size` produces different IDs, and a vocabulary-size check alone would
 silently reuse the wrong cache.
 
+## The same fingerprint guards the weights
+
+The cache was the first place a same-sized vocabulary could slip through, not the
+last. `load_state_dict` validates tensor **shapes**, so two tokenizers with
+`vocab_size=2048` load against each other without complaint while meaning
+different things — token 1146 is `Z` in one vocabulary and `▁interpretations` in
+another. A model trained that way keeps its old embedding rows, sees correctly
+encoded data, reports a plausible loss, and is wrong on every token.
+
+So `save_checkpoint` now writes `tokenizer_fingerprint` into `model.pt`, and
+`train()` stamps it into `training_state.pt` too. Both are checked on load:
+
+| what is loaded | on a mismatch |
+|---|---|
+| `model.pt` + the tokenizer beside it | `VocabMismatch` |
+| `training_state.pt` resume | `ValueError` — cannot resume |
+
+Checkpoints written before the guard have no fingerprint. Loading one **by name**
+is allowed and backfills the value, because `save_checkpoint` copies the
+tokenizer into the checkpoint directory beside the weights, so the pair was
+written together and cannot have been swapped. A caller supplying an arbitrary
+tokenizer object gets no such allowance. A resume state without a fingerprint is
+refused outright: unlike a named checkpoint, there is nothing tying it to a
+vocabulary, and resuming is where a silent mismatch would compound over epochs.
+
 ## Gotchas worth knowing
 
 - **Empty sequences raise.** A state that tokenises to nothing, or a candidate

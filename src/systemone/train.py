@@ -30,8 +30,14 @@ class History:
     evals: list[tuple[int, float]] = field(default_factory=list)
     epoch: int = 0
 
-    def state(self, model, optimiser, scheduler) -> dict:
-        """Everything needed to continue this run later."""
+    def state(self, model, optimiser, scheduler, fingerprint: str = "") -> dict:
+        """Everything needed to continue this run later.
+
+        `fingerprint` identifies the tokenizer the rows were encoded with. Resume
+        compares it: the weights are only meaningful against the vocabulary that
+        produced the token ids, and `load_state_dict` cannot tell them apart
+        because a same-sized vocabulary is shape-compatible.
+        """
         return {
             "epoch": self.epoch,
             "losses": list(self.losses),
@@ -40,6 +46,7 @@ class History:
             "model": model.state_dict(),
             "optimiser": optimiser.state_dict(),
             "scheduler": scheduler.state_dict(),
+            "tokenizer_fingerprint": fingerprint,
         }
 
 
@@ -144,6 +151,20 @@ def train(
     start_epoch = 0
 
     if resume:
+        saved = resume.get("tokenizer_fingerprint")
+        current = getattr(dataset, "fingerprint", "")
+        if saved is None:
+            raise ValueError(
+                "cannot resume: this training state predates the tokenizer "
+                "fingerprint guard, so its vocabulary cannot be verified. "
+                "Start a fresh run instead."
+            )
+        if saved != current:
+            raise ValueError(
+                f"cannot resume: the saved state was trained with tokenizer "
+                f"{saved}, but these rows were encoded with {current}. The weights "
+                "and the token ids mean different things; retrain from scratch."
+            )
         model.load_state_dict(resume["model"])
         start_epoch = int(resume["epoch"])
         history.epoch = start_epoch
@@ -187,7 +208,13 @@ def train(
             model.to(device).train()
         history.epoch = epoch + 1
         if on_epoch_end is not None:
-            on_epoch_end(epoch + 1, history.state(model, optimiser, scheduler))
+            on_epoch_end(
+                epoch + 1,
+                history.state(
+                    model, optimiser, scheduler,
+                    fingerprint=getattr(dataset, "fingerprint", ""),
+                ),
+            )
 
     model.eval()
     return history

@@ -1,5 +1,5 @@
 from .calibrate import fit_temperatures, is_identifiable
-from .checkpoint import load_checkpoint, save_checkpoint
+from .checkpoint import VocabMismatch, load_checkpoint, save_checkpoint
 from .config import ModelConfig
 from .data import EncodedSet, Example, load_jsonl, load_or_build
 from .hf import load_jevbench, split_by_case
@@ -23,6 +23,7 @@ __all__ = [
     "Request",
     "Score",
     "TinyJev",
+    "VocabMismatch",
     "answer_request",
     "build_model",
     "build_report",
