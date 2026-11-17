@@ -5,7 +5,7 @@ import torch
 
 from systemone import ModelConfig, build_model, checkpoint_path, load_or_build, save_checkpoint, set_seed
 from systemone.data import filter_to_budget
-from systemone.bpe import SentencePieceTokenizer, train_tokenizer
+from systemone.bpe import DEFAULT_VOCAB_SIZE, SentencePieceTokenizer, train_tokenizer
 from systemone.calibrate import (
     accuracy,
     accuracy_by_kind,
@@ -81,9 +81,15 @@ if tokenizer_file.exists():
     # Reuse: retraining per run is the same work every time and changes the
     # vocabulary the dataset cache is keyed on.
     tokenizer = SentencePieceTokenizer(tokenizer_file)
+    if tokenizer.vocab_size != DEFAULT_VOCAB_SIZE:
+        print(
+            f"warning: reusing a {tokenizer.vocab_size}-piece tokenizer; a new "
+            f"vocabulary is {DEFAULT_VOCAB_SIZE} pieces. Delete {tokenizer_file} "
+            f"or use a new checkpoint name to rebuild it."
+        )
     print(f"tokenizer reused vocab={tokenizer.vocab_size}")
 else:
-    tokenizer = train_tokenizer(collect_texts(train_grouped), directory / "tokenizer", vocab_size=2048)
+    tokenizer = train_tokenizer(collect_texts(train_grouped), directory / "tokenizer", vocab_size=DEFAULT_VOCAB_SIZE)
     print(f"tokenizer vocab={tokenizer.vocab_size}")
 
 cfg = ModelConfig(

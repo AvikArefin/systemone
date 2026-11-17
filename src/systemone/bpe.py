@@ -18,11 +18,13 @@ SEP_SYMBOL = "\u241f"
 # See docs/04-tokenizer-and-prompts.md for the sweep.
 MIN_CHARACTER_COUNT = 10
 
-# Unicode categories for characters that carry no visible mark: combining
-# marks, format characters (zero-width joiner, bidi controls), and control
-# characters. A rare one of these is noise with no rendering, so dropping it
-# loses nothing -- unlike `∑`, which a reader would notice going missing.
-INVISIBLE_CATEGORIES = frozenset({"Mn", "Mc", "Me", "Cf", "Cc", "Cs"})
+# Vocabulary size for a new tokenizer. 2,048 slots run out around merge
+# frequency ~1,000: `doctor` occurs 973 times in the deduplicated corpus and
+# still split into `do|ctor`, while dates and punctuation had already won
+# slots. 3,072 holds `doctor`, `legal` and `friend` whole and takes the sample
+# document from 40 to 36 tokens; on the 128-wide model that is 131k extra
+# parameters (1.00M -> 1.13M).
+DEFAULT_VOCAB_SIZE = 3072
 
 # Currency signs. A decision task that mentions money must not render it as
 # `<unk>`, so these are reserved whatever their frequency.
@@ -56,7 +58,7 @@ MATHS_SYMBOLS = (
 # in open_jev__phone-extraction-control-v1, Chinese song titles in bge-hn-hotpotqa,
 # Korean and Japanese article titles in dbpedia and fineweb. At
 # `character_coverage=1.0` every one of those characters wins a permanent
-# vocabulary slot, so a handful of rows spends ~300 of the 2048 slots on
+# vocabulary slot, so a handful of rows spends ~300 vocabulary rows on
 # characters no English row will ever use.
 FOREIGN_SCRIPTS = frozenset(
     {
@@ -103,16 +105,36 @@ def is_foreign(ch: str) -> bool:
     return any(low <= code <= high for low, high in EMOJI_RANGES)
 
 
+def is_greek(ch: str) -> bool:
+    return unicodedata.name(ch, "").startswith("GREEK")
+
+
 def strip_foreign(text: str) -> str:
     """Drop foreign-script characters, keeping everything else in place."""
     return "".join(ch for ch in text if not is_foreign(ch))
+
+
+# Accented Greek vowels with a Latin lookalike. `ό` is a Greek omicron with a
+# tonos: NFKD gives Greek `ο` plus a combining accent, not ASCII `o`, so the
+# usual fold does not see it. In an English corpus these are quoted Greek words,
+# not maths, and a dead `ό` slot beside `o` is two rows for one letter.
+GREEK_FOLDS = {
+    "\u03ac": "a", "\u03ad": "e", "\u03ae": "i", "\u03af": "i",
+    "\u03cc": "o", "\u03cd": "u", "\u03ce": "o",
+    "\u0386": "A", "\u0388": "E", "\u0389": "I", "\u038a": "I",
+    "\u038c": "O", "\u038e": "U", "\u038f": "O",
+    "\u03ca": "i", "\u03cb": "u", "\u0390": "i", "\u03b0": "u",
+    "\u03aa": "I", "\u03ab": "U",
+}
 
 
 def fold_char(ch: str) -> str | None:
     """The ASCII letter a rare accented character stands for, or None.
 
     `ǒ` becomes `o` and `Ñ` becomes `N`, so a rare accented name stays readable
-    instead of collapsing to `<unk>`.
+    instead of collapsing to `<unk>`. Accented Greek vowels fold to their Latin
+    lookalike (`ό` -> `o`); that is why `GREEK_FOLDS` exists, because NFKD stops
+    at the Greek base letter.
 
     Only letters fold. A symbol must not: `≠` decomposes to `≠`, which would strip
     to `=` and invert the meaning, and `∪` would become nothing. A symbol that
@@ -124,7 +146,7 @@ def fold_char(ch: str) -> str | None:
     base = "".join(c for c in decomposed if not unicodedata.combining(c))
     if len(base) == 1 and base.isascii() and base != ch:
         return base
-    return None
+    return GREEK_FOLDS.get(ch)
 
 
 def prune_rare(text: str, minimum: int = MIN_CHARACTER_COUNT) -> str:
@@ -140,9 +162,10 @@ def prune_rare(text: str, minimum: int = MIN_CHARACTER_COUNT) -> str:
 
     1. Every accented letter folds to its base. Unconditional. This runs first so
        that the fold cannot push a character back over the floor and escape.
-    2. Whatever is *still* non-ASCII and below the floor is resolved:
-       invisible characters and rare symbols are dropped, unless reserved
-       (currency, maths), where `<unk>` would lose meaning.
+    2. Whatever is *still* non-ASCII is resolved: non-reserved Greek is dropped
+       however frequent (it is quoted Greek text, never English), then anything
+       below the floor is dropped unless reserved (currency, maths), where
+       `<unk>` would lose meaning.
 
     Counts run over the whole text, so a character is judged on its total use
     rather than per line. The separator is exempt: it is a `user_defined_symbol`
@@ -169,18 +192,24 @@ def prune_rare(text: str, minimum: int = MIN_CHARACTER_COUNT) -> str:
     if foldable:
         text = text.translate(str.maketrans(foldable))
 
-    # Pass 2: police what is still non-ASCII and rare, measured after folding.
+    # Pass 2: police what is still non-ASCII, measured after folding.
     counts: Counter = Counter(text)
     keep = reserved_symbols(text)
     replacements: dict[str, str] = {}
     for char, n in counts.items():
-        if ord(char) < 128 or n >= minimum or char == SEP_SYMBOL or char in keep:
+        if ord(char) < 128 or char == SEP_SYMBOL or char in keep:
             continue
-        if unicodedata.category(char) in INVISIBLE_CATEGORIES:
+        # Greek that is not a reserved maths symbol is quoted Greek text. Drop it
+        # however frequent: `ο` beside `o` is still two rows for one letter, and
+        # no English row needs it. Pass 1 already moved accented Greek vowels to
+        # their Latin lookalike.
+        if is_greek(char):
             replacements[char] = ""
-        else:
-            # Rare non-ASCII with no reserved meaning: `■`, `【`, `⅓`, stray Greek.
-            replacements[char] = ""
+            continue
+        if n >= minimum:
+            continue
+        # Rare non-ASCII with no reserved meaning: `■`, `【`, `⅓`, stray IPA.
+        replacements[char] = ""
     if not replacements:
         return text
     return "".join(replacements.get(char, char) for char in text)
@@ -267,11 +296,20 @@ class SentencePieceTokenizer:
 def train_tokenizer(
     texts: list[str],
     model_prefix: str | Path,
-    vocab_size: int = 2048,
+    vocab_size: int = DEFAULT_VOCAB_SIZE,
     *,
     strip_foreign_scripts: bool = True,
     min_character_count: int = MIN_CHARACTER_COUNT,
+    split_digits: bool = True,
 ) -> SentencePieceTokenizer:
+    """Train the BPE vocabulary.
+
+    `split_digits` keeps every digit a separate piece so BPE cannot spend merges
+    on numbers. Without it the corpus grows pieces like `▁2027-0` (dates in the
+    voucher/policy rows) while `doctor` stays in fragments. A digit string is
+    information-poor, repeats across unrelated datasets, and does not generalise;
+    splitting it frees the merge budget for words and costs one token per digit.
+    """
     prefix = Path(model_prefix)
     prefix.parent.mkdir(parents=True, exist_ok=True)
     corpus = prefix.with_suffix(".corpus.txt")
@@ -292,6 +330,7 @@ def train_tokenizer(
         bos_id=-1,
         eos_id=-1,
         user_defined_symbols=reserved_symbols(body),
+        split_digits=split_digits,
     )
     corpus.unlink()
     return SentencePieceTokenizer(prefix.with_suffix(".model"))

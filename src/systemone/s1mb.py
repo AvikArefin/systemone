@@ -323,7 +323,31 @@ def load_bekko_train(
     )
 
 
-def collect_texts(grouped: dict[str, list[Example]]) -> list[str]:
+def collect_texts(
+    grouped: dict[str, list[Example]], *, deduplicate: bool = True
+) -> list[str]:
+    """The text a tokenizer should learn the language from.
+
+    One string per typed example is not that text. A choice case with eight
+    options becomes eight examples sharing one state and one instruction, so the
+    same document is fed to BPE eight times and `collect_texts` emitted 552,862
+    texts of which only 71,917 were distinct. BPE picks merges by frequency, so
+    the merge budget goes to whatever repeats hardest: rubric descriptions
+    repeat thousands of times and earn whole pieces (`▁instructions`,
+    `▁probabilities`), while document prose repeats rarely and stays split
+    (`do|ct|or`, `c|ann|ab|is`).
+
+    Deduplicating keeps the *variety* of text the model reads -- every distinct
+    state, instruction and criterion -- and removes repetition that comes from
+    the batch layout rather than from the language. It costs one line and
+    changes what the vocabulary is optimised for by design, not by accident.
+    Measured on 148 bekko configs, an `aegis2` document encodes 13% shorter.
+    See docs/04-tokenizer-and-prompts.md.
+
+    `deduplicate=False` exists only to rebuild the historical comparison
+    tokenizers (`v0_raw`..`v3_floor10`) that were trained on the repeated
+    corpus; nothing in training should use it.
+    """
     texts: list[str] = []
     for case in grouped.values():
         for example in case:
@@ -331,4 +355,6 @@ def collect_texts(grouped: dict[str, list[Example]]) -> list[str]:
             texts.append(example.question.instructions)
             if isinstance(example.question, (Choice, Score)):
                 texts.extend(str(criterion) for criterion in example.question.criteria)
-    return texts
+    if not deduplicate:
+        return texts
+    return list(dict.fromkeys(texts))

@@ -17,6 +17,7 @@ from systemone.s1mb import (
     _normalise,
     _subsample,
     _text,
+    collect_texts,
     parse_decision,
     render_state,
 )
@@ -243,3 +244,35 @@ def test_text_unquotes_json_strings():
     assert _text('"quoted"') == "quoted"
     assert _text('{"a": 1}') == '{"a": 1}'
     assert _text("bare") == "bare"
+
+
+def test_collect_texts_keeps_one_copy_of_text_shared_by_options():
+    """A choice case repeats its state and instruction once per option.
+
+    That repetition is an artifact of the batch layout, not of the language, and
+    it is what let rubric words win whole-piece merges while document words
+    stayed split. The tokenizer corpus must contain each distinct text once.
+    """
+    question = Choice(instructions="rate it", criteria=["one", "two"])
+    grouped = {
+        "case/1": [
+            Example(state="document", question=question, label="one"),
+            Example(state="document", question=question, label="two"),
+        ]
+    }
+    assert collect_texts(grouped) == ["document", "rate it", "one", "two"]
+
+
+def test_collect_texts_can_reproduce_the_repeated_corpus():
+    """The historical comparison tokenizers were built from the repeated list."""
+    question = Choice(instructions="rate it", criteria=["one", "two"])
+    grouped = {
+        "case/1": [
+            Example(state="document", question=question, label="one"),
+            Example(state="document", question=question, label="two"),
+        ]
+    }
+    assert collect_texts(grouped, deduplicate=False) == [
+        "document", "rate it", "one", "two",
+        "document", "rate it", "one", "two",
+    ]

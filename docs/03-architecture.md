@@ -194,6 +194,10 @@ final norm + head                       =      256
 total                                   = 1,000,704  (~1.00M)
 ```
 
+Those are the `bekko_tiny` checkpoint's numbers (2,048 pieces). `train_tokenizer`
+now defaults to 3,072, which makes the embedding 3,072 × 128 = 393,216 and the
+total 1,131,776 (~1.13M); the rest of the breakdown is unchanged.
+
 Note that **26% of all parameters are the embedding table**. That is a real
 trade-off: a bigger vocabulary shortens sequences but eats the parameter budget.
 See [Deployment](13-deployment.md).

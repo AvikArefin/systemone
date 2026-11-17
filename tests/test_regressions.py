@@ -676,6 +676,51 @@ class TestRareCharactersFoldInsteadOfVanishing:
 
 
 
+class TestGreekAndDigitsDoNotGetSlots:
+    """Two more kinds of slot the corpus was paying for.
+
+    `ό` is a Greek omicron with a tonos: NFKD gives Greek `ο`, not ASCII `o`, so
+    the old fold skipped it and it kept a dead slot. Dates like `▁2027-0`
+    repeated in the voucher rows and won merges that `doctor` (973 occurrences)
+    could not afford.
+    """
+
+    def test_accented_greek_vowels_fold_to_latin(self):
+        from systemone.bpe import fold_char
+
+        assert fold_char("\u03cc") == "o"  # ό
+        assert fold_char("\u03ac") == "a"  # ά
+        assert fold_char("\u038c") == "O"  # Ό
+
+    def test_non_reserved_greek_is_dropped_however_frequent(self):
+        from systemone.bpe import prune_rare
+
+        # `ο` and `γ` are quoted Greek words, not maths. Frequency does not save
+        # them: a slot for `ο` beside `o` is still a wasted row.
+        assert prune_rare("\u03bf" * 20, minimum=10) == ""
+        assert prune_rare("\u03b3" * 20, minimum=10) == ""
+
+    def test_reserved_maths_greek_is_kept(self):
+        from systemone.bpe import prune_rare
+
+        # `π` is in MATHS_SYMBOLS and must stay readable even once.
+        assert prune_rare("\u03c0", minimum=10) == "\u03c0"
+
+    def test_digits_never_merge_into_multi_digit_pieces(self, tmp_path):
+        from systemone.bpe import train_tokenizer
+
+        texts = ["the request date is 2027-01-15 and the voucher is 2027-0. " * 40]
+        tokenizer = train_tokenizer(texts, tmp_path / "tokenizer", vocab_size=64)
+        pieces = [
+            tokenizer.sp.id_to_piece(index)
+            for index in range(tokenizer.vocab_size)
+        ]
+        assert not [
+            piece for piece in pieces
+            if sum(char.isdigit() for char in piece) >= 2
+        ], pieces
+
+
 class TestRawAccuracyFlatteredTheModel:
     """BUG: the headline number was raw accuracy on a skewed benchmark.
 

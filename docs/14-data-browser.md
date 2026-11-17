@@ -52,6 +52,7 @@ s1mb_tiny · 2,048 pieces · 425 foreign
 tokenizer_versions/v0_raw · 2,048 pieces · 735 foreign · no filtering
 tokenizer_versions/v1_strip · 2,048 pieces · script strip only
 tokenizer_versions/v3_floor10 · 2,048 pieces · strip + fold + floor 10
+tokenizer_versions/v4_dedup · 3,072 pieces · dedup + split digits + Greek cleanup (new default)
 ```
 
 Switching rebuilds the token views and re-counts the vocabulary sheet for the new
@@ -62,7 +63,10 @@ choosing between models does not accumulate them.
 
 This is how the corpus-filtering work is verified by eye: open `codesearch` and
 switch from `v0_raw` to `v3_floor10`. The foreign count goes to 0 and the token
-count for the same 400 cases drops.
+count for the same 400 cases drops. Switch again to `v4_dedup` to see the corpus
+change shape: `doctor`, `legal` and `friend` become whole pieces, numbers stop
+merging (`▁2027` is gone), and rubric words fragment (`▁instructions` becomes two
+pieces, `▁probabilities` four).
 
 Three panes follow: **configs** → **cases** → **one case**.
 

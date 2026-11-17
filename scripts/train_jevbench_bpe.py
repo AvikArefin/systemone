@@ -11,7 +11,7 @@ from systemone import (
     set_seed,
     split_by_case,
 )
-from systemone.bpe import train_tokenizer
+from systemone.bpe import DEFAULT_VOCAB_SIZE, train_tokenizer
 from systemone.calibrate import (
     accuracy,
     accuracy_by_kind,
@@ -41,7 +41,7 @@ for case in grouped.values():
             texts.extend(example.question.criteria)
 
 directory = checkpoint_path(NAME)
-tokenizer = train_tokenizer(texts, directory / "tokenizer", vocab_size=2048)
+tokenizer = train_tokenizer(texts, directory / "tokenizer", vocab_size=DEFAULT_VOCAB_SIZE)
 print(f"tokenizer vocab={tokenizer.vocab_size} sep={tokenizer.sep_id}")
 
 cfg = ModelConfig(

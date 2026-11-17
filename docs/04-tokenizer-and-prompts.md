@@ -25,7 +25,7 @@ A BPE model trained on a corpus. Multi-character pieces become one token, so a
 sentence costs ~3-4× fewer tokens.
 
 ```python
-tokenizer = train_tokenizer(texts, "artifacts/<name>/tokenizer", vocab_size=2048)
+tokenizer = train_tokenizer(texts, "artifacts/<name>/tokenizer", vocab_size=3072)
 ```
 
 `train_tokenizer` writes a corpus file, runs `SentencePieceTrainer` in BPE mode
@@ -132,36 +132,34 @@ Dropping them costs nothing measurable.
 
 **A new vocabulary invalidates the weights, and now says so.** Retraining the
 tokenizer leaves every checkpoint trained against the old one meaningless, and
-`load_state_dict` cannot tell — it compares tensor shapes, and 2048 rows is 2048
-rows whichever pieces they represent. `save_checkpoint` writes a
+`load_state_dict` cannot tell — it compares tensor shapes, and the same number
+of rows is the same shape whichever pieces they represent. `save_checkpoint` writes a
 `tokenizer_fingerprint` into `model.pt` and `train()` stamps one into
 `training_state.pt`; both are checked on load, so a swapped vocabulary raises
 `VocabMismatch` instead of training on silently relabelled tokens. Details in the
 [data pipeline](05-data-pipeline.md#the-same-fingerprint-guards-the-weights).
 
-## Open question: the vocabulary is badly shaped for English prose
+## The vocabulary was shaped by a corpus that repeated itself
 
-The character filters above control which *characters* get slots. They say nothing
-about whether the *multi-character* pieces are the right ones, and there the
-vocabulary is clearly wrong. An `aegis2` document encodes as:
+An `aegis2` document encoded as:
 
 ```
 ·do|ct|or   ·le|g|al   ·c|ann|ab|is   ·ha|v|ing   ·f|ri|end   ·n|at|ur|ally
 ```
 
-That is `doctor` in three pieces, `legal` in three, `cannabis` in four. Meanwhile
-the vocab holds whole pieces for words that only appear in rubrics:
+`doctor` in three pieces, `legal` in three, `cannabis` in four. Meanwhile the
+vocab held whole pieces for words that only appear in rubrics:
 
 ```
 ·instructions  ·identification  ·interpretations  ·probabilities  ·contradiction
 ```
 
-Both facts have the same cause: **the training corpus is not a sample of the text
-the model reads.**
+Both facts had the same cause: **the training corpus was not a sample of the
+text the model reads.**
 
-`collect_texts` emits one string per *typed example*, and a choice case with 8
-options becomes 8 examples that share one state and one instruction. Measured over
-148 configs:
+`collect_texts` emitted one string per *typed example*, and a choice case with
+eight options becomes eight examples sharing one state and one instruction, so
+the same document was fed to BPE eight times. Measured over 148 cached configs:
 
 | | count |
 |---|---|
@@ -171,32 +169,90 @@ options becomes 8 examples that share one state and one instruction. Measured ov
 | distinct instruction strings | 3,398 |
 | instruction emissions | 118,223 (97.1% redundant) |
 
-So BPE's merge budget — which is driven by frequency — goes to whatever repeats
-hardest. A single score-level description
-(`"4.0: A direct and sufficient answer for the intended subject"`) is fed in
-**7,600 times**. Rubric vocabulary is therefore cheap to merge into whole pieces,
-while `doctor`, which appears in documents, is not.
+BPE's merge budget is driven by frequency, so it went to whatever repeated
+hardest. A single score-level description (`"4.0: A direct and sufficient answer
+for the intended subject"`) was fed in **7,600 times**. Rubric vocabulary was
+therefore cheap to merge into whole pieces, while `doctor`, which appears in
+documents, was not. By characters the corpus was 74.7% state text, 18.1%
+instructions and 7.2% options; by frequency the instructions were dramatically
+over-represented relative to how varied they are.
 
-The composition is 74.7% state text, 18.1% instructions, 7.2% options by
-character — but by *frequency* the instructions are dramatically over-represented
-relative to how varied they are.
+**Fixed: `collect_texts` keeps one copy of each text.** The change is one line,
+`list(dict.fromkeys(texts))`, keeping the first occurrence so the corpus order
+stays deterministic. `deduplicate=False` remains only to rebuild the historical
+comparison tokenizers.
 
-**Measured effect of deduplicating** (same hyperparameters, same filters):
+**Dedupe alone gets partway.** Measured on the same corpus, same hyperparameters
+and same character filters by
+[`scripts/build_tokenizers.py`](../scripts/build_tokenizers.py):
 
-| corpus | distinct texts | `doctor` | whole sample words | document tokens |
-|---|---|---|---|---|
-| all 552,862 (current) | 552,862 | 3 pieces | 3/17 | 44 |
-| deduplicated | 71,917 | 3 pieces | 6/17 | **38** |
+| corpus | vocab | `doctor` | common words whole | document tokens | single-char pieces | tokens/char, repeated sample | tokens/char, distinct |
+|---|---|---|---|---|---|---|---|
+| repeated (`v3_floor10`, old) | 2,048 | 3 | 7/22 | 46 | 283 | 0.3230 | 0.3597 |
+| deduplicated, before pruning | 2,048 | 2 | 9/22 | 40 | 278 | 0.3392 | 0.3515 |
+| deduplicated + pruned (`v4_dedup`, new) | 3,072 | **1** | **17/22** | **36** | **260** | **0.3161** | **0.3288** |
 
-Deduping cuts the corpus by 76.5% and *improves* document encoding by 14%.
-Training only on states does better still — 11/22 whole words, 40 tokens — but
-drops instruction text the model also has to read, so it is not obviously correct.
+The document is the fixed aegis2-style sentence
+`prompt: I don't think my doctor would know about them. ...` (144 characters),
+not a rubric string. Deduping removes 87% of the corpus and shortens that
+document by 13%. `doctor` goes from three pieces to two, `legal` and `having`
+from three to two, and `friend` from three to one. The rubric words move the
+other way on purpose: `instructions` 1→2, `identification` 1→3, `probabilities`
+1→4. The middle row is the deduplicated corpus before the second round below; it
+is a measurement, not a shipped artifact.
 
-Not fixed here, because it changes what the tokenizer is optimised for and that is
-a design decision: dedupe the corpus, weight states higher, or keep the current
-mix. The character filters are orthogonal and stack with any of them.
+**Second round: digits and Greek.** Two kinds of slot were still being paid for.
+Dates in the voucher/policy rows made `▁2027` and `▁2027-0` real pieces, while
+`doctor` occurs 973 times in the deduplicated corpus and the 2,048th merge sits
+around frequency 1,000 — it missed by a hair. `train_tokenizer` now passes
+`split_digits=True`, so every digit is its own piece and no number can merge;
+60 multi-digit pieces disappear. Accented Greek vowels now fold to their Latin
+lookalike (`ό` is a Greek omicron with a tonos, so NFKD stops at Greek `ο`; the
+fold table maps it to `o`), and Greek that is not a reserved maths symbol is
+dropped however frequent. That removes 11 dead slots and leaves only
+`π σ Δ α β μ λ`.
 
-**Where the 2048 slots actually go** (measured on `v3_floor10`):
+Pruning alone did not rescue `doctor`: the freed slots went to other frequent
+merges. The binding limit was the budget. 3,072 slots hold `doctor`, `legal`,
+`friend`, `anything` and `either` whole and take the document to 36 tokens; on
+the 128-wide model the extra 1,024 rows cost 131k parameters (1.00M → 1.13M,
++13%). `cannabis` occurs 13 times and `naturally` 206, so they stay split at any
+vocabulary this size. That is the right trade: a piece for a 13-use word spends
+a slot a common word needs.
+
+After both rounds the same document is:
+
+```
+·doctor ·legal ·c|ann|ab|is ·having ·friend ·n|at|ur|ally
+```
+
+**States-only was rejected.** Training only on the state text keeps more common
+words whole, but it drops every instruction and option string, which the model
+reads for `score` and `noul` rows, so it optimises for a distribution the model
+does not see at inference. Dedup keeps every distinct text and removes only the
+repetition.
+
+Both tokens-per-char columns improve with the pruned 3,072 model: the repeated
+sample goes from 0.3230 to 0.3161, and the distinct corpus from 0.3597 to
+0.3288. The repeated column is a 1-in-20 sample of the 552,862-text corpus, so it
+is not directly the full-corpus 0.314 in the character-filter table above; every
+variant is measured on the same sample.
+
+**Consequence: retrain, and rebuild the tokenizer.** A new vocabulary makes
+every checkpoint trained against the old one meaningless. The fingerprint guard
+already refuses a mismatch (`VocabMismatch`); see
+[Data pipeline](05-data-pipeline.md#the-same-fingerprint-guards-the-weights).
+`train_bekko.py` reuses an existing `tokenizer.model`, so building the new
+vocabulary means deleting it or using a different checkpoint name.
+
+Reproduce the table with `uv run python scripts/build_tokenizers.py`. It reads
+the cached configs once, pickles the corpus and builds each variant, writing
+`artifacts/tokenizer_versions/<name>/meta.json`; `v4_dedup` sits beside the four
+older models in the data browser. The corpus is capped at 400 cases per config,
+the same cap the earlier measurements used, so the numbers are comparable; the
+cap is a measurement choice, not a training one.
+
+**Where the 2,048 slots went** (measured on `v3_floor10`):
 
 | | count |
 |---|---|
@@ -205,8 +261,12 @@ mix. The character filters are orthogonal and stack with any of them.
 | single-character pieces that are ASCII | 167 |
 | extra slots held by case variants (e.g. `▁the`, `▁The`, `▁THE`) | 153 |
 
+The new `v4_dedup` has 3,072 slots and 260 single-character pieces, 88 of them
+non-ASCII, against 283/116 here. The breakdown below is still the old 2,048
+model; the case-variant slots remain a real cost.
+
 The 167 ASCII single-character pieces are unavoidable — English needs its
-alphabet. The 116 non-ASCII break down as:
+alphabet. The 116 non-ASCII in the old 2,048 model broke down as:
 
 | what | count | examples |
 |---|---|---|
@@ -219,14 +279,15 @@ alphabet. The 116 non-ASCII break down as:
 | other | 1 | `ー` |
 
 Only the top row is deliberate. The IPA is pronunciation notation from
-`helpsteer2`; the Greek is mostly maths that never grew into a merged piece, but
-16 real Greek letters remain. The 12 accented Latin have no base letter to fold
-to (`æ`, `ø`, `ß`, `Þ` are distinct letters, not decorated `a`, `o`, `s`, `T`).
-The 6 combining marks survive the fold because they sit above the floor and
-attached to characters NFC cannot compose. At 116 slots this is no longer the
-main cost — the 153 case-variant slots are — but it is not "deliberate
-reservation" either, and the frequency floor cannot remove what appears more than
-10 times.
+`helpsteer2`; the 16 Greek letters were mostly maths that never grew into a
+merged piece. `v4_dedup` drops Greek that is not reserved maths and folds
+accented Greek vowels, so only the reserved maths letters remain. The 12 accented
+Latin have no base letter to fold to (`æ`, `ø`, `ß`, `Þ` are distinct letters,
+not decorated `a`, `o`, `s`, `T`). The 6 combining marks survive the fold because
+they sit above the floor and attached to characters NFC cannot compose. At 116
+slots this is no longer the main cost — the 153 case-variant slots are — but it
+is not "deliberate reservation" either, and the frequency floor cannot remove
+what appears more than 10 times.
 
 ## Why building a tokenizer is slow
 
@@ -274,14 +335,15 @@ an absent one spends a slot the data never reaches.
 Measured over the full corpus, the filter changes 239 of 552,862 texts (0.04%) and
 **no text becomes empty**.
 
-Four versions are built for comparison under `artifacts/tokenizer_versions/`:
+Five versions are built for comparison under `artifacts/tokenizer_versions/`:
 
 | version | what it is |
 |---|---|
 | `v0_raw` | no filtering |
 | `v1_strip` | script strip only — the previous shipped behaviour |
 | `v2_floor3` | strip + frequency floor 3 |
-| `v3_floor10` | strip + unconditional fold + floor 10 |
+| `v3_floor10` | strip + unconditional fold + floor 10 — the repeated corpus, 2,048 pieces |
+| `v4_dedup` | deduplicated corpus + split digits + Greek cleanup + strip + fold + floor 10 — the new default, 3,072 pieces |
 
 Lowering `character_coverage` instead was the obvious fix and the wrong one.
 It is a percentile, not a filter: at 0.9995 it also discarded `Z`, `Q`, `é`, `£`
@@ -291,8 +353,10 @@ filter deliberately keeps accented Latin, typography (`—`, curly quotes), and
 math symbols (`→`, `≤`, `∞`, `√`) — `aqua_rat` and the relevance rows need those,
 and they are not emoji despite sitting in the same Unicode neighbourhood.
 
-Models for side-by-side comparison: four versions under
-`artifacts/tokenizer_versions/` (see the table above).
+Models for side-by-side comparison: five versions under
+`artifacts/tokenizer_versions/` (see the table above). The first four were built
+by an uncommitted scratch loop; `scripts/build_tokenizers.py` rebuilds `v4_dedup`
+and measures any of the five.
 
 Fixed IDs shared by both tokenizers:
 

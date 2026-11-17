@@ -127,8 +127,8 @@ silently reuse the wrong cache.
 ## The same fingerprint guards the weights
 
 The cache was the first place a same-sized vocabulary could slip through, not the
-last. `load_state_dict` validates tensor **shapes**, so two tokenizers with
-`vocab_size=2048` load against each other without complaint while meaning
+last. `load_state_dict` validates tensor **shapes**, so two tokenizers with the
+same `vocab_size` load against each other without complaint while meaning
 different things — token 1146 is `Z` in one vocabulary and `▁interpretations` in
 another. A model trained that way keeps its old embedding rows, sees correctly
 encoded data, reports a plausible loss, and is wrong on every token.
