@@ -1,4 +1,4 @@
-"""Baseline-adjusted S1MB scoring.
+"""Baseline-adjusted scoring for the test split.
 
 Implements the three adjustments described in `docs/10-metrics.md`: balanced
 accuracy for `noul`, headroom-adjusted accuracy for `choice`, and expected-value

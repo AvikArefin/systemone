@@ -1,4 +1,4 @@
-"""Integration tests against the real S1MB benchmark and bekko corpus.
+"""Integration tests against the real train and test splits.
 
 These are the tests that would have caught the original bugs, because they assert
 on the actual corpus shapes: 151-option choices, 40k-token states, long
@@ -12,14 +12,16 @@ import pytest
 from systemone import ModelConfig
 from systemone.bpe import SentencePieceTokenizer
 from systemone.data import EncodedSet
-from systemone.s1mb import (
+from systemone.corpus import (
+    BEKKO_REPO,
     _options,
     _text,
-    all_configs,
-    load_bekko_train,
-    load_s1mb,
+    load_test,
+    load_train,
     parse_decision,
     render_state,
+    test_configs as eval_roster,
+    train_configs,
 )
 from systemone.tokenizer import ByteTokenizer, truncate_head_tail
 
@@ -35,8 +37,8 @@ def tokenizer():
     return SentencePieceTokenizer(CKPT)
 
 
-def test_s1mb_has_the_documented_shape():
-    grouped = load_s1mb(["aegis2", "arc"], seed=0)
+def test_test_split_has_the_documented_shape():
+    grouped = load_test(["aegis2", "arc"], seed=0)
     assert grouped, "loader returned nothing"
     examples = [e for case in grouped.values() for e in case]
     assert all(e.benchmark for e in examples), "benchmark label must survive parsing"
@@ -44,7 +46,7 @@ def test_s1mb_has_the_documented_shape():
 
 def test_loading_does_not_silently_drop_choice_decisions():
     """>8-option choices used to raise inside the parser and disappear."""
-    grouped = load_s1mb(["banking77", "clinc"], max_candidates=None, shuffle_options=False, strict=True)
+    grouped = load_test(["banking77", "clinc"], max_candidates=None, shuffle_options=False, strict=True)
     kinds = {e.question.__class__.__name__ for case in grouped.values() for e in case}
     assert "Choice" in kinds
     assert grouped, "wide-option subsets must not vanish entirely"
@@ -56,9 +58,9 @@ def test_eval_loading_preserves_candidate_order():
 
     from datasets import load_dataset
 
-    from systemone.s1mb import parse_decision
+    from systemone.corpus import parse_decision
 
-    dataset = load_dataset("hotchpotch/s1mb-dataset", "arc", split="test")
+    dataset = load_dataset(BEKKO_REPO, "arc", split="test")
     for row in dataset:
         targets = {t["decision_id"]: t for t in row["targets"]}
         state = render_state(row["input"]["state_json"])
@@ -87,7 +89,7 @@ def test_every_choice_row_keeps_its_candidate_text(tokenizer):
     On the real corpus the instruction is often 600 tokens against a 48-token
     budget, so this asserts the property that was actually broken.
     """
-    grouped = load_s1mb(["arc", "aqua_rat"], max_candidates=8, strict=True)
+    grouped = load_test(["arc", "aqua_rat"], max_candidates=8, strict=True)
     examples = [e for case in grouped.values() for e in case]
     cfg = _cfg(tokenizer)
     encoded = EncodedSet.build(examples, tokenizer, cfg)
@@ -104,8 +106,8 @@ def test_every_choice_row_keeps_its_candidate_text(tokenizer):
 
 
 def test_choice_groups_do_not_collapse_to_one_encoding(tokenizer):
-    """27% of S1MB choice groups collapsed before the fix; this pins it at zero."""
-    grouped = load_s1mb(["arc", "aqua_rat", "bbq"], max_candidates=8, strict=True)
+    """27% of test choice groups collapsed before the fix; this pins it at zero."""
+    grouped = load_test(["arc", "aqua_rat", "bbq"], max_candidates=8, strict=True)
     examples = [e for case in grouped.values() for e in case]
     cfg = _cfg(tokenizer)
     encoded = EncodedSet.build(examples, tokenizer, cfg)
@@ -127,32 +129,37 @@ def test_choice_groups_do_not_collapse_to_one_encoding(tokenizer):
 
 
 def test_state_truncation_is_measured_not_assumed(tokenizer):
-    """Half of S1MB is longer than the state budget; the encoding must be honest."""
-    grouped = load_s1mb(["aegis2"], strict=True)
+    """Half of the test split is longer than the state budget; the encoding must be honest."""
+    grouped = load_test(["aegis2"], strict=True)
     example = next(e for case in grouped.values() for e in case)
     ids = tokenizer.encode(example.state)
     assert truncate_head_tail(ids, 8) == ids[:6] + ids[-2:]
 
 
-def test_bekko_train_loads_and_is_not_s1mb():
-    grouped = load_bekko_train(max_cases=2)
+def test_train_split_loads():
+    grouped = load_train(["arc", "aegis2"], max_cases=2)
     assert grouped, "bekko loader returned nothing"
     examples = [e for case in grouped.values() for e in case]
     assert examples
 
 
-def test_all_configs_returns_the_full_roster():
-    configs = all_configs()
-    assert len(configs) == 106
+def test_test_configs_returns_the_evaluation_roster():
+    assert len(eval_roster()) == 106
+
+
+def test_train_configs_filters_to_train_splits():
+    configs = set(train_configs())
+    assert "agnews" in configs
+    assert "bbq" not in configs
 
 
 def test_wide_options_survive_without_a_cap():
-    """151-option choices exist in S1MB; they must parse with max_candidates=None."""
+    """151-option choices exist in the test split; they must parse with max_candidates=None."""
     import random
 
     from datasets import load_dataset
 
-    dataset = load_dataset("hotchpotch/s1mb-dataset", "arc", split="test")
+    dataset = load_dataset(BEKKO_REPO, "arc", split="test")
     parsed = 0
     for row in dataset:
         targets = {t["decision_id"]: t for t in row["targets"]}

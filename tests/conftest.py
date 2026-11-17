@@ -55,10 +55,12 @@ def pytest_collection_modifyitems(config, items):
     Slow tests are excluded by default via `addopts`; run them with `-m slow`.
     """
     hub = Path.home() / ".cache" / "huggingface" / "hub"
-    has_s1mb = (hub / "datasets--hotchpotch--s1mb-dataset").exists()
-    if has_s1mb:
+    has_bekko = (
+        hub / "datasets--hotchpotch--bekko-system-one-dataset-v0"
+    ).exists()
+    if has_bekko:
         return
-    skip = pytest.mark.skip(reason="S1MB not in the HuggingFace cache")
+    skip = pytest.mark.skip(reason="bekko not in the HuggingFace cache")
     for item in items:
         if "slow" in item.keywords or "network" in item.keywords:
             item.add_marker(skip)

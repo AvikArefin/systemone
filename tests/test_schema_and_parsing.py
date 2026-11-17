@@ -1,6 +1,6 @@
 """Tests for the typed-question schema and dataset parsing.
 
-The schema caps used to reject option sets larger than 8. S1MB has choices with up
+The schema caps used to reject option sets larger than 8. The test split has choices with up
 to 151 options, so the rejection was swallowed by the parser's broad `except` and
 those decisions were dropped without a word. These tests pin both halves of that
 interaction.
@@ -12,7 +12,7 @@ import pytest
 
 from systemone import Choice, Example, Noul, Request, Score
 from systemone.schema import make_choice, make_noul, make_score, normalise_levels
-from systemone.s1mb import (
+from systemone.corpus import (
     _criterion_definitions,
     _normalise,
     _subsample,
@@ -37,7 +37,7 @@ def test_choice_rejects_bad_option_counts():
 
 
 def test_choice_accepts_realistic_wide_option_sets():
-    """S1MB reaches 151 options; rejecting these silently loses whole subsets."""
+    """The test split reaches 151 options; rejecting these silently loses whole subsets."""
     for count in (2, 8, 9, 17, 36, 77, 151):
         criteria = [f"option {i}" for i in range(count)]
         assert len(Choice(instructions="q", criteria=criteria).criteria) == count

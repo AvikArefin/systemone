@@ -156,14 +156,14 @@ vocabulary, and resuming is where a silent mismatch would compound over epochs.
 - **A candidate must never be truncated away.** `EncodedSet.build` raises if a
   `choice`/`score` row has no separator, because a group whose rows all collapse
   to one encoding cannot be answered. This guard exists because front-only
-  truncation silently deleted the candidate from 44.8% of S1MB rows; see
+  truncation silently deleted the candidate from 44.8% of test rows; see
   [Tokenizer and prompts](04-tokenizer-and-prompts.md) for the budget rule.
 - **`max_candidates=8` is a training default, not a limit.** Training subsamples
   large option sets to 8 (always keeping the gold one) and shuffles order, so the
   model cannot memorise position. Benchmark scoring must *not* do this — it needs
-  the original candidate set and order, so `load_s1mb(..., max_candidates=None,
-  shuffle_options=False)`. The schema accepts up to 256 options, because S1MB has
-  choices with 151.
+  the original candidate set and order, so `load_test(..., max_candidates=None,
+  shuffle_options=False)`. The schema accepts up to 256 options, because the
+  test split has choices with 151.
 - **Drops are reported.** `load_typed_decisions` counts any decision it cannot
   parse and prints a warning; pass `strict=True` to raise instead. Silently
   dropping 10.8% of the benchmark was how 9 subsets disappeared unnoticed.

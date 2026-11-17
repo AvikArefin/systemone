@@ -304,7 +304,7 @@ class TestTemperatureIdentifiability:
 
     On a near-chance model the NLL curve is flat past T~4, so the search returns
     whichever grid point it happens to evaluate. The same model fitted on two
-    halves of S1MB gave T=4.69 and T=1.82 -- one of those cannot be right.
+    halves of the test split gave T=4.69 and T=1.82 -- one of those cannot be right.
     """
 
     def test_flat_logits_are_not_identifiable(self):

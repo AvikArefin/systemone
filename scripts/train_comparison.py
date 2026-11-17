@@ -20,18 +20,18 @@ from systemone.calibrate import (
     expected_calibration_error,
     fit_temperatures,
 )
-from systemone.s1mb import all_configs, collect_texts, load_s1mb
+from systemone.corpus import collect_texts, load_test, test_configs
 from systemone.train import evaluate, train
 
 SEED = 0
-NAME = "s1mb_tiny"
+NAME = "test_tiny"
 EPOCHS = int(os.environ.get("SYSTEMONE_EPOCHS", "10"))
 
-CONFIGS = all_configs()
+CONFIGS = test_configs()
 
 set_seed(SEED)
 device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
-grouped = load_s1mb(CONFIGS, seed=SEED)
+grouped = load_test(CONFIGS, seed=SEED)
 counts = {"noul": 0, "choice": 0, "score": 0}
 for case in grouped.values():
     for example in case:

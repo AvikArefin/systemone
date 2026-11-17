@@ -13,12 +13,11 @@ from systemone.calibrate import (
     expected_calibration_error,
     fit_temperatures,
 )
-from systemone.s1mb import (
-    BEKKO_REPO,
-    all_configs,
+from systemone.corpus import (
     collect_texts,
-    load_bekko_train,
-    load_s1mb,
+    load_test,
+    load_train,
+    train_configs,
 )
 from systemone.train import evaluate, train
 
@@ -56,17 +55,17 @@ set_seed(SEED)
 device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
 
 started = time.perf_counter()
-configs = all_configs(BEKKO_REPO)
+configs = train_configs()
 if CONFIG_LIMIT:
     configs = configs[:CONFIG_LIMIT]
-train_grouped = load_bekko_train(
+train_grouped = load_train(
     configs=configs, max_candidates=MAX_CANDIDATES, max_cases=MAX_CASES, seed=SEED
 )
 train_set = [example for case in train_grouped.values() for example in case]
 print(f"train load_s={time.perf_counter() - started:.1f} configs={len(configs)} "
       f"cases={len(train_grouped)} examples={len(train_set)}")
 
-test_grouped = load_s1mb(all_configs(), seed=SEED)
+test_grouped = load_test(seed=SEED)
 test_set = [example for case in test_grouped.values() for example in case]
 
 counts = {"noul": 0, "choice": 0, "score": 0}
@@ -118,11 +117,11 @@ if FIT_ONLY:
 
 suffix = "_fit" if FIT_ONLY else ""
 train_data = load_or_build(directory / f"bekko_train_cache{suffix}.pt", train_set, tokenizer, cfg)
-test_data = load_or_build(directory / f"s1mb_test_cache{suffix}.pt", test_set, tokenizer, cfg)
+test_data = load_or_build(directory / f"test_cache{suffix}.pt", test_set, tokenizer, cfg)
 # The same model measured both ways: the fit-only subset is the number worth
 # reporting, the full split shows what truncation costs by comparison.
 full_test_data = (
-    load_or_build(directory / "s1mb_test_cache.pt", full_test_set, tokenizer, cfg)
+    load_or_build(directory / "test_cache.pt", full_test_set, tokenizer, cfg)
     if FIT_ONLY
     else None
 )

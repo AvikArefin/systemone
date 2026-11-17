@@ -28,7 +28,7 @@ That number is the reason the capacity conversation in
 attention scratch. That is small for one request and *not* small for a batch,
 because rows multiply: at 576 rows and 791 tokens the hidden tensor alone is
 233 MB and the FFN activation 641 MB. This is why batching is capped by
-**rows** (`max_rows=256`), not by examples — one S1MB-style choice with thousands
+**rows** (`max_rows=256`), not by examples — one test-style choice with thousands
 of candidates is thousands of rows by itself. See
 [Experiments](11-experiments.md#the-attention-mask-was-the-thing-that-crashed-the-machine).
 

@@ -1,12 +1,12 @@
 # 10 — Metrics
 
 Why the leaderboard number is not "accuracy", and what it takes to produce a
-comparable one. Spec: S1MB `evaluator/SCORING.md`.
+comparable one. Spec: the benchmark's `evaluator/SCORING.md`.
 
 ## Raw accuracy is not enough
 
 `accuracy_by_kind()` in [`calibrate.py`](../src/systemone/calibrate.py) gives the
-plain fraction correct. Useful for debugging. Not comparable to published S1MB
+plain fraction correct. Useful for debugging. Not comparable to published benchmark
 scores, because:
 
 - `noul` classes are imbalanced → always answering "false" scores well.
@@ -14,7 +14,7 @@ scores, because:
   mixed.
 - `score` is ordered → predicting the middle every time scores decently.
 
-S1MB therefore reports **baseline-adjusted** scores: 0 means "no better than the
+The benchmark therefore reports **baseline-adjusted** scores: 0 means "no better than the
 trivial strategy", 100 means "at the ceiling".
 
 ## The three adjustments
@@ -93,21 +93,21 @@ statement.
 ## What this project can and cannot report today
 
 `scripts/train_*.py` prints **raw accuracy per kind** plus ECE, which is a
-debugging signal, not a leaderboard number. `scripts/eval_s1mb.py` computes the
+debugging signal, not a leaderboard number. `scripts/eval.py` computes the
 adjusted scores described above:
 
 ```bash
-SYSTEMONE_EVAL_CHECKPOINT=bekko_tiny uv run python scripts/eval_s1mb.py
+SYSTEMONE_EVAL_CHECKPOINT=bekko_tiny uv run python scripts/eval.py
 ```
 
 It keeps the benchmark's own candidate sets and order
 (`max_candidates=None, shuffle_options=False`) and fails loudly rather than
 dropping a decision, so the number it prints is comparable to the published
-table. Output goes to `artifacts/<name>/s1mb_report.json`.
+table. Output goes to `artifacts/<name>/test_report.json`.
 
 All four steps are implemented:
 
-1. Load S1MB with `max_candidates=None, shuffle_options=False` so the benchmark's
+1. Load the test split with `max_candidates=None, shuffle_options=False` so its
    own candidate sets and order are used.
 2. Run the model, collect per-decision predicted distributions
    (`scoring.probabilities_by_group`).
@@ -121,7 +121,7 @@ without re-parsing the dataset.
 
 ## Why raw accuracy flatters this benchmark
 
-Measured on the S1MB test split, the trivial policies already score:
+Measured on the test split, the trivial policies already score:
 
 | kind | best trivial policy | accuracy |
 |---|---|---:|

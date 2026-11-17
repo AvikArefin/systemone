@@ -1,4 +1,4 @@
-"""Measure what the state-token cap costs on S1MB.
+"""Measure what the state-token cap costs on the test split.
 
 Loads a checkpoint, re-encodes the test split at several `max_state_tokens`
 values, and scores each with the baseline-adjusted metric. RoPE makes the
@@ -16,13 +16,12 @@ import os
 import sys
 import time
 from dataclasses import replace
-from pathlib import Path
 
 import torch
 
 from systemone import checkpoint_path, load_checkpoint, set_seed
 from systemone.data import EncodedSet
-from systemone.s1mb import S1MB_REPO, all_configs, load_s1mb
+from systemone.corpus import load_test, test_configs
 from systemone.scoring import Decision, build_report, probabilities_by_group
 
 NAME = os.environ.get("SYSTEMONE_STATE_CHECKPOINT", "bekko_tiny")
@@ -45,19 +44,11 @@ model, tokenizer, temperatures = load_checkpoint(NAME)
 print(f"checkpoint={NAME} params={model.cfg.parameter_count():,} device={device}")
 
 
-def local_configs() -> list[str]:
-    root = Path.home() / ".cache" / "huggingface" / "datasets" / S1MB_REPO.replace("/", "___")
-    if not root.exists():
-        return []
-    return sorted(p.name for p in root.iterdir() if p.is_dir())
-
-
-
-configs = sys.argv[1:] or local_configs() or all_configs()
+configs = sys.argv[1:] or test_configs()
 if CONFIGS is not None:
     configs = configs[:CONFIGS]
 
-grouped = load_s1mb(
+grouped = load_test(
     configs, max_candidates=None, seed=0, shuffle_options=False, strict=True
 )
 examples = [example for case in grouped.values() for example in case]

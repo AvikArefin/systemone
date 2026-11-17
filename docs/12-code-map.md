@@ -15,12 +15,13 @@ Every file, what it does, and where to look when you want to change something.
 | [`prompt.py`](../src/systemone/prompt.py) | Turns a question + candidate into token IDs | `choice_query`, `noul_query`, `score_query` |
 | [`train.py`](../src/systemone/train.py) | Training loop, schedule, evaluation | `train`, `evaluate`, `History` |
 | [`calibrate.py`](../src/systemone/calibrate.py) | Metrics, temperature fitting, ECE | `collect_logits`, `fit_temperatures`, `is_identifiable`, `expected_calibration_error` |
-| [`scoring.py`](../src/systemone/scoring.py) | Baseline-adjusted S1MB scoring (Task Avg) | `build_report`, `probabilities_by_group`, `Decision` |
+| [`scoring.py`](../src/systemone/scoring.py) | Baseline-adjusted test scoring (Task Avg) | `build_report`, `probabilities_by_group`, `Decision` |
 | [`inference.py`](../src/systemone/inference.py) | One request in, typed answers out | `answer_request` |
 | [`checkpoint.py`](../src/systemone/checkpoint.py) | Save/load a named model directory | `save_checkpoint`, `load_checkpoint` |
 | [`paths.py`](../src/systemone/paths.py) | Where checkpoints live | `CHECKPOINT_DIR`, `checkpoint_path()` |
 | [`seeding.py`](../src/systemone/seeding.py) | Reproducibility | `set_seed`, `build_model` |
-| [`s1mb.py`](../src/systemone/s1mb.py) | S1MB + bekko corpus loaders and row parsing | `load_typed_decisions`, `load_s1mb`, `load_bekko_train`, `parse_decision` |
+| [`corpus.py`](../src/systemone/corpus.py) | Dataset rosters and row loading for train, validation and test | `load_typed_decisions`, `load_train`, `load_test`, `train_configs`, `test_configs`, `parse_decision` |
+| [`decontamination.py`](../src/systemone/decontamination.py) | Test-duplicate fingerprints and the blocklist | `case_fingerprint`, `find_test_duplicates`, `load_blocklist`, `write_blocklist` |
 | [`hf.py`](../src/systemone/hf.py) | Legacy JevBench loader | `load_jevbench`, `split_by_case` |
 | [`__init__.py`](../src/systemone/__init__.py) | Public surface | re-exports |
 
@@ -30,10 +31,10 @@ Every file, what it does, and where to look when you want to change something.
 |---|---|---|
 | [`smoke.py`](../scripts/smoke.py) | Construct a model, run one request, check shapes | seconds |
 | [`train_synthetic.py`](../scripts/train_synthetic.py) | Synthetic 3-task demo, end-to-end with calibration | ~30 s |
-| [`train_main.py`](../scripts/train_main.py) | Train on the bekko corpus, evaluate on S1MB test | 20 min – 2 h |
-| [`train_comparison.py`](../scripts/train_comparison.py) | Train on S1MB configs (contaminates the benchmark — comparison only) | ~40 min |
+| [`train_main.py`](../scripts/train_main.py) | Train on the train split, evaluate on test | 20 min – 2 h |
+| [`train_comparison.py`](../scripts/train_comparison.py) | Train on the benchmark's test split (contaminates it — comparison only) | ~40 min |
 | [`train_legacy.py`](../scripts/train_legacy.py) | Train on JevBench with a trained BPE tokenizer | ~20 min |
-| [`measure_budget.py`](../scripts/measure_budget.py) | Measure what each query budget preserves on S1MB, per decision kind | minutes |
+| [`measure_budget.py`](../scripts/measure_budget.py) | Measure what each query budget preserves on the test split, per decision kind | minutes |
 | [`measure_state_budget.py`](../scripts/measure_state_budget.py) | Score a checkpoint at several state/query budgets, whole split and on the rows the cap cut | 5 – 30 min |
 | [`measure_attention_memory.py`](../scripts/measure_attention_memory.py) | Mask tensor size and attention time per mask strategy | seconds |
 
@@ -74,7 +75,7 @@ logits [R]  ──►  batch_loss (per group)  ──►  backward
 | Change LR/schedule | `train.py` | `warmup_fraction`, `min_lr_ratio` |
 | Add a new decision type | `schema.py` → `data.rows_for` → `batch_loss` → `inference` | four places, in that order |
 | Swap the tokenizer | `tokenizer.py` / `bpe.py` | keep `pad_id`/`sep_id` meaning |
-| Add a dataset | `s1mb.py` | `load_typed_decisions` expects the shared schema |
+| Add a dataset | `corpus.py` | `load_typed_decisions` expects the shared schema |
 | Verify a checkpoint still loads | `checkpoint.py` | keys are the same as training |
 
 ## Tests — `tests/`

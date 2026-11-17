@@ -42,7 +42,7 @@ from systemone.bpe import (
     train_tokenizer,
 )
 from systemone.paths import CHECKPOINT_DIR
-from systemone.s1mb import (
+from systemone.corpus import (
     BEKKO_REPO,
     all_configs,
     collect_texts,
@@ -132,7 +132,7 @@ def load_corpus(cache: Path) -> dict[str, Any]:
     `SAMPLE_EVERY` to measure tokens per character.
 
     The texts come from the same rows and the same shared RNG state as
-    `load_bekko_train`, so `dedup` is exactly what `collect_texts` now returns.
+    `load_train`, so `dedup` is exactly what `collect_texts` now returns.
     That makes the comparison isolate the corpus mix and nothing else.
     """
     if cache.exists():

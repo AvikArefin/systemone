@@ -83,7 +83,7 @@ score = sum(level_index * p)      # expected value, e.g. 1.7 on a 0-3 scale
 
 Note that `score` returns a **fractional** number, not a class. That is the right
 output for an ordered scale: "1.7" carries more information than "2", and it is
-what the S1MB metric measures (mean absolute error against the expected value).
+what the Task Avg metric measures (mean absolute error against the expected value).
 
 ## Worked example
 

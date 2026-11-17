@@ -1,12 +1,14 @@
 # 09 — Datasets and benchmark
 
 Where the data comes from, what shape it is in, and the contamination trap.
-Files: [`s1mb.py`](../src/systemone/s1mb.py), [`hf.py`](../src/systemone/hf.py).
+Files: [`corpus.py`](../src/systemone/corpus.py),
+[`decontamination.py`](../src/systemone/decontamination.py),
+[`hf.py`](../src/systemone/hf.py).
 
 ## The format everyone shares
 
-S1MB and the bekko training corpus use **the same schema**, which is why one
-parser handles both:
+The test split and the bekko training rows use **the same schema**, which is
+why one parser handles both:
 
 ```
 input.state_json      the shared state, as JSON
@@ -19,10 +21,12 @@ split, case_id, group_id, language, input_hash
 `probabilities` are soft: `[0.7, 0.3]` is a real target, not an error. Keeping
 candidate order and soft targets intact is explicit in both dataset cards.
 
-## Evaluation: S1MB
+## Evaluation: the test split
 
-**System One Mosaic Benchmark**, `hotchpotch/s1mb-dataset` (renamed from
-`S1MB-english-v1`).
+The `test` split is the published System One benchmark (S1MB), republished
+inside bekko. The source repo (`hotchpotch/S1MB-english-v1`, formerly
+`hotchpotch/s1mb-dataset`) and bekko are kept in sync: all 106 test configs were
+compared column-for-column, and rows, order and values are identical.
 
 | | |
 |---|---|
@@ -32,11 +36,11 @@ candidate order and soft targets intact is explicit in both dataset cards.
 | Splits | `test` only |
 | Benchmarks | 137 (59 noul, 57 choice, 21 score) |
 
-Homepage numbers matter here: **the distributed data is an evaluation-only test
-split**. There is no train split and no validation split. If you train on it, you
-are training on the benchmark.
+The benchmark is **evaluation-only**. There is no train split to look for. If you
+train on it, you are training on the benchmark.
 
-`load_s1mb()` reads it with `split="test"`.
+`load_test()` reads `split="test"` and defaults to `test_configs()`, the 106
+configs that actually carry a `test` split.
 
 ## Training: bekko corpus
 
@@ -51,8 +55,8 @@ bekko-system-one models, published in the same format.
 | Cap | 300,000 judgments per subset, complete cases |
 | Decontamination | two train cases removed for exact test matches (2026-10-08) |
 
-`load_bekko_train(max_cases=N)` caps rows per subset, because a full pass is
-~262k steps at batch 32 — about 27 hours on this machine.
+`load_train(max_cases=N)` reads `train_configs()` and caps rows per subset,
+because a full pass is ~262k steps at batch 32 — about 27 hours on this machine.
 
 ## Licensing — read before shipping
 
@@ -70,10 +74,10 @@ permissively licensed teacher is ever needed.
 
 ## The contamination trap (important)
 
-Our first "improvement" was training on the S1MB test split. That produced
+Our first "improvement" was training on the test split. That produced
 0.417 → 0.551 and felt like progress. It was not comparable to anything:
 
-- Published S1MB scores come from models that never trained on it.
+- Published benchmark scores come from models that never trained on it.
 - Our number came from a model that trained on 80% of it.
 - Even after switching to the bekko corpus we still share **dataset families**
   with the evaluation — bekko's own authors disclose 77 of 106 subset names in
@@ -82,15 +86,15 @@ Our first "improvement" was training on the S1MB test split. That produced
 
 What we do now:
 
-1. Train on `bekko-system-one-dataset-v0`, never on S1MB.
-2. Evaluate on S1MB test with rows held out (different rows, same families).
+1. Train on `bekko-system-one-dataset-v0`, never on the test split.
+2. Evaluate on the test split with rows held out (different rows, same families).
 3. Say "same-family exposure" out loud whenever quoting a number.
-4. Treat S1MB's six synthetic generalisation subsets as the honest signal, since
+4. Treat the six synthetic generalisation subsets as the honest signal, since
    they test instruction-following rather than family familiarity.
 
 ## The state budget vs. the real corpus
 
-`max_state_tokens` is 192. Measured on the S1MB test split, one row per case,
+`max_state_tokens` is 192. Measured on the test split, one row per case,
 with the tokenizer the deployed checkpoint actually uses (`bekko_tiny`):
 
 ```
@@ -109,8 +113,8 @@ does not keep.
 
 **These counts depend on the tokenizer.** An earlier version of this table
 reported 7,788 truncated (55.6%) and a 39,163-token maximum; that was measured
-with the `s1mb_tiny` tokenizer, which is a different BPE vocabulary over the same
-text. Compare budgets within one tokenizer, never across.
+with an earlier comparison tokenizer, which is a different BPE vocabulary over
+the same text. Compare budgets within one tokenizer, never across.
 
 Bumping this budget is a cheap accuracy win that no run so far has tested — every
 headline number in [Experiments](11-experiments.md) was produced at 192. The cost
@@ -164,29 +168,25 @@ difficulty.
 Both are still ~1%, which is the point worth keeping: the subset you report on
 does not rescue a model that has learned only the label marginals.
 
-## The two repos, and which splits they have
+## One repo, three splits
 
-They are not the same kind of thing, and the split names hide it:
+Bekko is the only dataset dependency. Its 182 configs split three ways:
 
 ```
-hotchpotch/s1mb-dataset              test only        100 cases per config
-hotchpotch/bekko-system-one-         train            thousands per config
-  dataset-v0                         validation       100 cases per config
-                                     test             100 cases per config
+bekko train       153 configs   thousands of cases per config
+bekko validation   82 configs   100 cases per config
+bekko test        106 configs   byte-identical to the published benchmark
 ```
 
-So the benchmark repo ships one split called `test`, because the whole repo is the
-benchmark. There is no train split to look for, and an evaluation run is always on
-`test`.
+77 config names appear in both train and test: same task family, different rows.
+The other 76 train configs have no benchmark counterpart at all. Bekko's
+`validation` and `test` splits are the benchmark itself, so `split="validation"`
+or `split="test"` on a training run is training on the test set wearing a
+different name.
 
-`bekko` is the training repo, and its `train` split is clean: measured across four
-configs, **zero case ids are shared with the benchmark**. Its `validation` and
-`test` splits are the benchmark itself, 100 for 100 with `s1mb-dataset`. That means
-`split="validation"` or `split="test"` on bekko is a training run on the test set
-wearing a different name.
-
-`load_bekko_train` asks for `split="train"`, so nothing in this project has leaked
-that way.
+`load_train` asks for `split="train"`, so nothing in this project has leaked
+that way. `train_configs()` and `test_configs()` are the two rosters; both read
+the dataset card, so neither probes splits one config at a time.
 
 ## Where the files live
 
@@ -205,6 +205,6 @@ The Arrow files are what `load_dataset` actually reads. First bekko load took
 `load_jevbench()` and `split_by_case()` are the earlier JevBench loader. It reads
 a `questions` config and groups examples by `case_id` so that all decisions about
 one case stay on the same side of a train/test split. Still used by
-`scripts/train_legacy.py`; superseded by the S1MB corpus loaders.
+`scripts/train_legacy.py`; superseded by the bekko loaders.
 
 Next: [Metrics →](10-metrics.md)

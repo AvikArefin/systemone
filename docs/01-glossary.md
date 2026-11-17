@@ -143,7 +143,7 @@ actual accuracy. 0 is perfect; 0.07 is decent.
 sharpen probabilities. Fixes calibration without changing the ranking.
 
 **Baseline-adjusted score** — a score expressed as "fraction of the gap from a
-trivial baseline to the ceiling". Used by the S1MB leaderboard; described in
+trivial baseline to the ceiling". Used by the benchmark leaderboard; described in
 [Metrics](10-metrics.md).
 
 ## Hardware

@@ -1,4 +1,4 @@
-"""Score a checkpoint on S1MB with the baseline-adjusted Task Avg metric.
+"""Score a checkpoint on the test split with the baseline-adjusted Task Avg metric.
 
 Unlike `scripts/train_*.py`, this keeps the benchmark's own candidate sets and
 order (`max_candidates=None`, `shuffle_options=False`) and refuses to drop a
@@ -13,7 +13,7 @@ import torch
 from systemone import ModelConfig, checkpoint_path, load_checkpoint, set_seed
 from systemone.bpe import SentencePieceTokenizer
 from systemone.data import EncodedSet
-from systemone.s1mb import all_configs, load_s1mb
+from systemone.corpus import load_test, test_configs
 from systemone.scoring import Decision, build_report, probabilities_by_group
 
 NAME = os.environ.get("SYSTEMONE_EVAL_CHECKPOINT", "bekko_tiny")
@@ -28,11 +28,11 @@ model, tokenizer, temperatures = load_checkpoint(NAME)
 print(f"checkpoint={NAME} params={model.cfg.parameter_count():,} device={device}")
 print(f"temperatures={ {k: round(v, 3) for k, v in temperatures.items()} }")
 
-configs = all_configs()
+configs = test_configs()
 if LIMIT is not None:
     configs = configs[:LIMIT]
 
-grouped = load_s1mb(
+grouped = load_test(
     configs, max_candidates=None, seed=SEED, shuffle_options=False, strict=True
 )
 examples = [example for case in grouped.values() for example in case]
@@ -48,7 +48,7 @@ cfg = ModelConfig(
     max_state_tokens=model.cfg.max_state_tokens,
     max_query_tokens=model.cfg.max_query_tokens,
 )
-cache = directory / "s1mb_eval_cache.pt"
+cache = directory / "eval_cache.pt"
 dataset = EncodedSet.build(examples, tokenizer, cfg)
 dataset.save(cache)
 print(f"rows={len(dataset.query_offsets) - 1} cache={cache.name}")
@@ -95,7 +95,7 @@ print(f"{'Task Avg':>8}            = {report.task_average * 100:.2f}")
 if report.excluded:
     print(f"excluded benchmarks (no headroom): {report.excluded}")
 
-out = directory / "s1mb_report.json"
+out = directory / "test_report.json"
 out.write_text(
     json.dumps(
         {

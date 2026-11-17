@@ -2,7 +2,7 @@
 
 The original bug: rows were truncated front-only to `max_query_tokens`, so a
 long instruction consumed the whole budget and the candidate was deleted. 45% of
-S1MB candidate rows lost their option text and 27% of `choice` groups collapsed
+test candidate rows lost their option text and 27% of `choice` groups collapsed
 to a single identical encoding -- a group the model cannot answer.
 """
 
@@ -111,7 +111,7 @@ def test_budget_always_preserves_a_candidate_token(tokenizer):
 
 
 def test_encoded_set_accepts_wide_option_sets(tokenizer):
-    """S1MB has choices with up to 151 options; the loader must not choke."""
+    """The test split has choices with up to 151 options; the loader must not choke."""
     cfg = _tiny_cfg()
     criteria = [f"option {i}" for i in range(24)]
     example = Example(

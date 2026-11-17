@@ -12,7 +12,7 @@ import pytest
 from systemone import ByteTokenizer, Choice, Example, ModelConfig, Noul, Score
 from systemone.data import EncodedSet, rows_for
 from systemone.prompt import choice_query
-from systemone.s1mb import parse_decision
+from systemone.corpus import parse_decision
 
 
 def _cfg(**overrides) -> ModelConfig:
@@ -31,7 +31,7 @@ def _cfg(**overrides) -> ModelConfig:
 
 
 class TestCandidateWasDeleted:
-    """BUG: front-only truncation removed the candidate from 44.8% of S1MB rows.
+    """BUG: front-only truncation removed the candidate from 44.8% of test rows.
 
     A row is `instructions + SEP + candidate`, truncated to 48 tokens from the
     front. Instructions run to 600+ tokens, so the candidate was cut off entirely.
@@ -82,7 +82,7 @@ class TestEvalDroppedDecisions:
     """BUG: >8-option choices raised inside the parser and were silently dropped.
 
     With the docs' own eval recipe (`max_candidates=None`) this lost 10.8% of all
-    S1MB judgments, all 32.4% of wide `choice` decisions, and 9 entire subsets,
+    test judgments, all 32.4% of wide `choice` decisions, and 9 entire subsets,
     while leaving a Task Avg that looked plausible.
     """
 
@@ -103,9 +103,9 @@ class TestEvalDroppedDecisions:
 
     def test_loader_reports_drops_instead_of_hiding_them(self, monkeypatch):
         """A dropped decision must be counted and surfaced, not silently skipped."""
-        import systemone.s1mb as s1mb
+        import systemone.corpus as corpus
 
-        monkeypatch.setattr(s1mb, "parse_decision", lambda *a, **k: None)
+        monkeypatch.setattr(corpus, "parse_decision", lambda *a, **k: None)
         monkeypatch.setattr(
             "datasets.load_dataset",
             lambda *a, **k: [
@@ -121,9 +121,9 @@ class TestEvalDroppedDecisions:
                 }
             ],
         )
-        assert s1mb.load_typed_decisions("repo", ["cfg"], strict=False) == {}
+        assert corpus.load_typed_decisions("repo", ["cfg"], strict=False) == {}
         with pytest.raises(ValueError, match="dropped 1 decisions"):
-            s1mb.load_typed_decisions("repo", ["cfg"], strict=True)
+            corpus.load_typed_decisions("repo", ["cfg"], strict=True)
 
 
 class TestNoulLabelsWereHidden:
@@ -186,7 +186,7 @@ class TestParameterCountDrifted:
 class TestScoreExpectedValueUsedIndices:
     """BUG: `score` used level indices, ignoring the dataset's real level values.
 
-    118 S1MB decisions use a 0..1 scale and 83 use thirds. Treating `0.25` as
+    118 test decisions use a 0..1 scale and 83 use thirds. Treating `0.25` as
     index 1 makes the expected value wrong, and the benchmark scores MAE against
     the real value.
     """
@@ -230,7 +230,7 @@ class TestScoreExpectedValueUsedIndices:
 class TestTemperaturesLeaked:
     """BUG: temperatures were fitted on the eval split and reported there.
 
-    The fix is correct but the effect is small: measured on two halves of S1MB,
+    The fix is correct but the effect is small: measured on two halves of the test split,
     ECE moved by 0.0002 on one half and 0.0156 on the other. The docs originally
     overstated this as a serious error; they now quote the measurement.
     """
@@ -252,7 +252,7 @@ class TestTemperatureFitIsNotIdentifiable:
 
     On a near-chance model the NLL curve is flat past T~4, so the grid search
     returns whichever point it happens to evaluate. The same checkpoint fitted on
-    two disjoint halves of S1MB gave choice T=4.69 and T=1.82. A confident model
+    two disjoint halves of the test split gave choice T=4.69 and T=1.82. A confident model
     also wants T below the grid floor. Both cases used to pass silently.
     """
 
@@ -748,7 +748,7 @@ class TestRawAccuracyFlatteredTheModel:
     def test_eval_script_exists_and_uses_the_adjusted_metric(self):
         from pathlib import Path
 
-        source = (Path(__file__).resolve().parents[1] / "scripts" / "eval_s1mb.py").read_text()
+        source = (Path(__file__).resolve().parents[1] / "scripts" / "eval.py").read_text()
         assert "build_report" in source
         assert "max_candidates=None" in source
         assert "shuffle_options=False" in source

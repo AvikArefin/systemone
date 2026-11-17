@@ -1,5 +1,12 @@
+"""Load the bekko corpus: config rosters, typed rows, and tokenizer text.
+
+The dataset has three splits. `train` is the only one training may read; `test`
+is the evaluation set, and `validation` holds its 100-case samples.
+"""
+
 import json
 import random
+from functools import lru_cache
 from pathlib import Path
 
 from .data import Example
@@ -204,11 +211,14 @@ def parse_decision(
     return None
 
 
-S1MB_REPO = "hotchpotch/s1mb-dataset"
 BEKKO_REPO = "hotchpotch/bekko-system-one-dataset-v0"
 
+# One repo holds both rosters. Its `test` split is a verbatim copy of the
+# published benchmark -- all 106 shared configs match row for row -- so training
+# and evaluation never depend on two releases that can drift apart.
 
-def all_configs(repo: str = S1MB_REPO) -> list[str]:
+
+def all_configs(repo: str = BEKKO_REPO) -> list[str]:
     """Config names for a dataset repo, falling back to the local cache.
 
     `get_dataset_config_names` needs the Hub. Offline it does not fail -- it
@@ -232,6 +242,63 @@ def all_configs(repo: str = S1MB_REPO) -> list[str]:
     return sorted(path.name for path in root.iterdir() if path.is_dir())
 
 
+def _local_splits(repo: str) -> dict[str, set[str]]:
+    """`{config: {split}}` from the Arrow files already in the local cache."""
+    from datasets.config import HF_DATASETS_CACHE
+
+    root = Path(HF_DATASETS_CACHE) / repo.replace("/", "___")
+    if not root.is_dir():
+        return {}
+    splits: dict[str, set[str]] = {}
+    for config in root.iterdir():
+        if not config.is_dir():
+            continue
+        splits[config.name] = {
+            path.name.rsplit("-", 1)[-1].removesuffix(".arrow")
+            for path in config.glob("*/*/*.arrow")
+        }
+    return splits
+
+
+@lru_cache(maxsize=None)
+def configs_with_split(repo: str = BEKKO_REPO, split: str = "test") -> list[str]:
+    """Config names that carry `split`.
+
+    The Hub dataset card is one read for every config and split. Probing with
+    `get_dataset_config_names` gives names only, and trying `load_dataset` per
+    miss costs a round trip each -- bekko has 76 configs without a `test` split.
+    Offline, the cached Arrow filenames already say which split they hold.
+    """
+    from huggingface_hub import HfApi
+
+    try:
+        card = HfApi().dataset_info(repo, files_metadata=False).card_data
+        configs = card.to_dict().get("configs") if card is not None else None
+    except Exception:
+        configs = None
+    if configs:
+        return sorted(
+            entry["config_name"]
+            for entry in configs
+            if entry.get("config_name")
+            and any(file.get("split") == split for file in entry.get("data_files") or [])
+        )
+    local = _local_splits(repo)
+    if local:
+        return sorted(name for name, splits in local.items() if split in splits)
+    return all_configs(repo)
+
+
+def test_configs(repo: str = BEKKO_REPO) -> list[str]:
+    """The evaluation roster: every config that has a `test` split (106)."""
+    return configs_with_split(repo, "test")
+
+
+def train_configs(repo: str = BEKKO_REPO) -> list[str]:
+    """The training roster: every config that has a `train` split (153)."""
+    return configs_with_split(repo, "train")
+
+
 def load_typed_decisions(
     repo: str,
     configs: list[str],
@@ -241,21 +308,27 @@ def load_typed_decisions(
     max_cases: int | None = None,
     shuffle_options: bool = True,
     strict: bool = False,
+    exclude: dict[str, set[str]] | None = None,
 ) -> dict[str, list[Example]]:
     from datasets import load_dataset
 
     rng = random.Random(seed)
     grouped: dict[str, list[Example]] = {}
     dropped: dict[str, int] = {}
+    skipped: dict[str, int] = {}
     for config in configs:
         try:
             dataset = load_dataset(repo, config, split=split)
         except Exception as error:
             print(f"skip config {config}: {type(error).__name__}")
             continue
+        blocked = (exclude or {}).get(config, set())
         for case, row in enumerate(dataset):
             if max_cases is not None and case >= max_cases:
                 break
+            if row["case_id"] in blocked:
+                skipped[config] = skipped.get(config, 0) + 1
+                continue
             decisions = row["input"]["decisions"]
             targets = {target["decision_id"]: target for target in row["targets"]}
             state = render_state(row["input"]["state_json"])
@@ -278,6 +351,9 @@ def load_typed_decisions(
                     continue
                 # namespace by config so case ids never merge across datasets
                 grouped.setdefault(f"{config}/{row['case_id']}", []).append(example)
+    if skipped:
+        total = sum(skipped.values())
+        print(f"excluded {total} benchmark-duplicate cases from training: {skipped}")
     if dropped:
         total = sum(dropped.values())
         message = f"dropped {total} decisions while parsing: {dropped}"
@@ -287,16 +363,21 @@ def load_typed_decisions(
     return grouped
 
 
-def load_s1mb(
-    configs: list[str],
+def load_test(
+    configs: list[str] | None = None,
     max_candidates: int | None = 8,
     seed: int = 0,
     shuffle_options: bool = True,
     strict: bool = False,
 ) -> dict[str, list[Example]]:
+    """The `test` split.
+
+    `configs=None` uses `test_configs()`, not every config in the repo: the
+    other 76 have no test split and would only produce skip warnings.
+    """
     return load_typed_decisions(
-        S1MB_REPO,
-        configs,
+        BEKKO_REPO,
+        configs if configs is not None else test_configs(),
         split="test",
         max_candidates=max_candidates,
         seed=seed,
@@ -305,14 +386,22 @@ def load_s1mb(
     )
 
 
-def load_bekko_train(
+def load_train(
     configs: list[str] | None = None,
     max_candidates: int | None = 8,
     seed: int = 0,
     max_cases: int | None = None,
+    exclude: dict[str, set[str]] | None = None,
 ) -> dict[str, list[Example]]:
+    """Training data, minus any test-duplicate cases in `exclude`.
+
+    `exclude` comes from `find_test_duplicates` / `load_blocklist` in
+    `decontamination`. Case ids and `input_hash` cannot stand in for it: across
+    all 106 test configs they overlap in zero rows, while the same case text does
+    appear in train. See `case_fingerprint`.
+    """
     if configs is None:
-        configs = all_configs(BEKKO_REPO)
+        configs = train_configs()
     return load_typed_decisions(
         BEKKO_REPO,
         configs,
@@ -320,6 +409,7 @@ def load_bekko_train(
         max_candidates=max_candidates,
         seed=seed,
         max_cases=max_cases,
+        exclude=exclude,
     )
 
 

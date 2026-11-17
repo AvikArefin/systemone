@@ -1,4 +1,4 @@
-"""Browse the S1MB and bekko datasets in a local browser.
+"""Browse the bekko dataset (train, validation, test) in a local browser.
 
     uv run python scripts/browse.py
 
@@ -24,13 +24,13 @@ for name in ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE"):
 from systemone.bpe import SentencePieceTokenizer, is_foreign
 from systemone.paths import CHECKPOINT_DIR
 from systemone.prompt import choice_query, noul_query, score_query
-from systemone.s1mb import BEKKO_REPO, S1MB_REPO, parse_decision, render_state
+from systemone.corpus import BEKKO_REPO, parse_decision, render_state
 from systemone.schema import Choice, Noul
 from systemone.tokenizer import truncate_head_tail
 
 HTML = Path(__file__).with_name("browse.html")
 DEFAULT_TOKENIZER = CHECKPOINT_DIR / "bekko_tiny" / "tokenizer.model"
-REPOS = {S1MB_REPO: "benchmark", BEKKO_REPO: "training"}
+REPOS = {BEKKO_REPO: "train + test"}
 VOCAB_CASE_CAP = 400  # cases one vocabulary count reads
 FOREIGN_SCAN_CASES = 250  # cases per config in the foreign-character scan
 

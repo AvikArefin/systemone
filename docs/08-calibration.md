@@ -68,7 +68,7 @@ choice of split is the caller's. The training scripts used to pass the eval spli
 which means the reported ECE included a parameter tuned on that same data. They now
 pass the train split.
 
-**How much did that matter? Almost nothing.** Measured on two halves of S1MB:
+**How much did that matter? Almost nothing.** Measured on two halves of the test split:
 
 ```
 half A: ECE with its own fit  0.0236      with the other half's fit  0.0238
@@ -85,7 +85,7 @@ The temperature is only meaningful if the loss actually responds to it. On a mod
 that is near chance, it doesn't:
 
 ```
-choice, same model, two disjoint halves of S1MB:  T = 4.69  vs  T = 1.82
+choice, same model, two disjoint halves of the test split:  T = 4.69  vs  T = 1.82
 noul, best grid point is the edge:                T = 10.0 (wants ~17.6 at high=1000)
 ```
 
@@ -122,7 +122,7 @@ than the search.
 
 ## What we actually measured
 
-On the 26k S1MB-slice run:
+On the 26k test-slice run:
 
 ```
 ECE before   0.117

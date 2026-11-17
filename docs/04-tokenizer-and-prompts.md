@@ -56,9 +56,9 @@ held-out English text.
 
 **What the strip does and does not touch.** It edits the *tokenizer's* copy of the
 text, nothing else. **No training or eval row is dropped** — the filter runs on
-the corpus file written for `SentencePieceTrainer`, so `load_bekko_train` and
-`load_s1mb` are unaffected and every case still trains and evaluates. Measured on
-44,128 sampled training rows and 10,566 S1MB eval rows:
+the corpus file written for `SentencePieceTrainer`, so `load_train` and
+`load_test` are unaffected and every case still trains and evaluates. Measured on
+44,128 sampled training rows and 10,566 test rows:
 
 | | training | eval |
 |---|---|---|
@@ -77,7 +77,7 @@ trade — a `<unk>` on a disclaimer nobody can use costs one row of embedding,
 where the individual characters cost 700.
 
 Two things this does *not* break. Choice groups whose options collapse to
-identical encodings: 6 exist on S1MB and **all 6 predate this change** — they are
+identical encodings: 6 exist in the test split and **all 6 predate this change** — they are
 duplicated option text in `hh_rlhf`, not a tokenizer artifact. The strip
 introduces none. And `aqua_rat`, whose decisions carry `√`, `≤`, `π`: those stay
 real tokens.
@@ -122,7 +122,7 @@ forever at any threshold.
 
 **Folding is safe, measured.** The risk is not token count but collisions — two
 distinct strings becoming identical. Across 44,065 choice groups in the training
-corpus and 20,484 in S1MB, folding merges **zero** options. The merges that do
+corpus and 20,484 in the test split, folding merges **zero** options. The merges that do
 happen are exactly the intended ones: `León`/`Léon` → `Leon`, `für`/`fur`,
 `Coöperatieve` → `Cooperatieve`, `Frédéric` → `Frederic`.
 
@@ -399,7 +399,7 @@ def truncate_head_tail(ids, limit):
 ```
 
 Limits: 192 tokens for a state, 64 for a query in the deployed config. The query
-limit was 48 until the encoding fix. Measured on the full S1MB test split
+limit was 48 until the encoding fix. Measured on the full test split
 (14,009 cases, 26,269 decisions, every candidate kept, `scripts/measure_budget.py`):
 
 ```
@@ -449,7 +449,7 @@ budget addresses. The 384 row is the first budget that does fix them.
 `EncodedSet.build` raises if any `choice`/`score` row has no separator, because a
 group whose rows all collapsed to one encoding is unanswerable. Before this check
 existed, front-only truncation silently deleted the entire candidate in ~45% of
-S1MB rows.
+test rows.
 
 ## The prompt format
 
@@ -494,7 +494,7 @@ candidate separately.
 
 Repetition keeps the code simple and the batching uniform. An earlier version of
 this page claimed "the 48-token query cap usually leaves room" — that was false,
-and it was the assumption the truncation bug hid behind. Measured on S1MB:
+and it was the assumption the truncation bug hid behind. Measured on the test split:
 instructions run to p50 27, p90 599, max 617 tokens, while the budget was 48. Half
 the noul queries sat exactly at that cap, and 21.6% of candidate rows had **no room
 left for the candidate at all** before the split gave the candidate priority. The

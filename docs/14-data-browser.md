@@ -23,22 +23,22 @@ the arrow file for the config and split on disk and opens it with
 A config that was never downloaded is therefore reported as missing:
 
 ```
-hotchpotch/s1mb-dataset · nonexistent · test is not in the local cache
+hotchpotch/bekko-system-one-dataset-v0 · nonexistent · test is not in the local cache
 ```
 
 Nothing is fetched to fix that. The startup line prints how many configs are
-cached per repo:
+cached:
 
 ```
-local cache only: {'hotchpotch/s1mb-dataset': 106, 'hotchpotch/bekko-...': 179}
+local cache only: {'hotchpotch/bekko-system-one-dataset-v0': 182}
 ```
 
 ## Choosing what to look at
 
 The header has a **repository** selector, a **split** selector, and a
-**tokenizer** selector. Both repos are always available, and the split list
-follows the config you pick: the benchmark repo only ships `test`, while the
-training repo ships `train`, `validation` and `test` depending on the config.
+**tokenizer** selector. Everything is read from bekko, and the split list follows
+the config you pick: train-only configs show `train`, the 106 benchmark configs
+show `test` (many also have `train` and `validation`).
 
 ### The tokenizer selector
 
@@ -48,7 +48,6 @@ holds. A comparison version also shows the description from its `meta.json`:
 
 ```
 bekko_tiny · 2,048 pieces · 640 foreign
-s1mb_tiny · 2,048 pieces · 425 foreign
 tokenizer_versions/v0_raw · 2,048 pieces · 735 foreign · no filtering
 tokenizer_versions/v1_strip · 2,048 pieces · script strip only
 tokenizer_versions/v3_floor10 · 2,048 pieces · strip + fold + floor 10
@@ -175,8 +174,8 @@ Read the shape, not just the size: `nanocoir` carries 8,048 Cyrillic characters 
 pervasive problem. `qasper` spreads its foreign text across 18 rows. The filter box
 matches a config name or a script, so typing `cyrillic` narrows the table. Each
 config is sampled at its first 250 cases — enough to find what a config contains,
-not to measure its exact volume. Both repos are scannable, and S1MB's Cyrillic
-comes from the same `nanocoir` family.
+not to measure its exact volume. Every split is scannable, and the Cyrillic text
+in the test configs comes from the same `nanocoir` family.
 
 ## The raw tab
 
@@ -194,7 +193,7 @@ is ours or the dataset's.
 - Cases are parsed on demand, one at a time. A family with 300k decisions is fine
   to open; only the case you click is turned into typed decisions.
 - Every page is addressable:
-  `#repo=s1mb-dataset&split=test&config=arc&case=arc:ARC-Challenge:test:27&tab=dec`
+  `#repo=bekko-system-one-dataset-v0&split=test&config=arc&case=arc:ARC-Challenge:test:27&tab=dec`
   can be pasted into a bug report. Add `vocab=1` to open the sheet.
 - The token view needs a tokenizer. It starts on
   `artifacts/bekko_tiny/tokenizer.model` unless you pass `--tokenizer`; every other

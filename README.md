@@ -22,12 +22,13 @@ src/systemone/
   data.py       Example/Batch, EncodedSet token cache, soft-label loss
   train.py      train/evaluate, warmup + cosine schedule
   calibrate.py  temperature scaling, ECE, per-kind accuracy
-  s1mb.py       loaders for S1MB evaluation and the bekko training corpus
+  corpus.py     dataset rosters and row loading for train, validation, test
+  decontamination.py  test-duplicate fingerprints and the blocklist
   inference.py  answer_request: one request in, typed answers out
   checkpoint.py save/load under artifacts/<name>/
 scripts/
-  train_main.py             train on bekko, evaluate on S1MB test
-  train_comparison.py       train on S1MB configs (comparison only)
+  train_main.py             train on the train split, evaluate on test
+  train_comparison.py       train on the benchmark test split (comparison only)
   train_legacy.py           train on JevBench (superseded)
   train_synthetic.py        small synthetic task, end-to-end
   smoke.py        construction/inference sanity check
@@ -40,7 +41,7 @@ uv sync
 uv run python scripts/smoke.py
 uv run python scripts/train_main.py           # BEKKO_CASES=1000, epochs=2
 uv run python scripts/train_synthetic.py
-uv run python scripts/eval_s1mb.py            # baseline-adjusted Task Avg
+uv run python scripts/eval.py                 # baseline-adjusted Task Avg
 ```
 
 Environment knobs: `SYSTEMONE_EPOCHS`, `SYSTEMONE_BATCH`, `BEKKO_CASES`,
@@ -54,23 +55,23 @@ uv run pytest -m slow             # dataset-backed, needs the HF cache
 ```
 
 The fast suite covers encoding, the token cache, model invariants, scoring maths,
-and schema validation. The slow suite asserts on the real S1MB corpus shapes
+and schema validation. The slow suite asserts on the real corpus shapes
 (151-option choices, 600-token instructions, 40k-token states) and is skipped when
 the HuggingFace cache is absent.
 
 ## Data
 
-- **Evaluation:** S1MB (`hotchpotch/s1mb-dataset`, 106 subsets, 26k judgments).
-  Test-only; scores on the public leaderboard are baseline-adjusted, not accuracy.
-- **Training:** `hotchpotch/bekko-system-one-dataset-v0` — 8.4M judgments in the
-  same schema, per-source licensed. Train on this; evaluate on S1MB test.
+- **Evaluation:** the `test` split — 106 configs, 26k judgments. Its scores are
+  baseline-adjusted, not accuracy.
+- **Training:** the `train` split — 8.4M judgments, same schema, per-source
+  licensed. One repo, two rosters, plus `validation` for 100-case samples.
 
 Loading is capped per subset (`BEKKO_CASES`) because a full pass is ~262k steps.
 
 ## Measured
 
-The first clean run, after the encoding fix. Raw accuracy on the S1MB test split,
-1M parameters:
+The first clean run, after the encoding fix. Raw accuracy on the test split, 1M
+parameters:
 
 | | `noul` | `choice` | `score` | overall |
 |---|---:|---:|---:|---:|
@@ -87,7 +88,7 @@ Task Avg = 1.04     (laya 13.36, bekko-17m 27.57, jev 59.59)
 
 That is low, and it is the honest starting point. `score` is flat zero across all
 21 of its benchmarks. See `docs/10-metrics.md` and run
-`scripts/eval_s1mb.py` to reproduce.
+`scripts/eval.py` to reproduce.
 
 ## Artifacts
 

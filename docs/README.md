@@ -23,7 +23,7 @@ decision data rather than general web text.
 | 06 | [Training](06-training.md) | What is being optimised, and how? |
 | 07 | [Inference](07-inference.md) | What happens on one real request? |
 | 08 | [Calibration](08-calibration.md) | Are the probabilities believable? |
-| 09 | [Datasets and benchmark](09-datasets-and-benchmark.md) | Where the data comes from, and what S1MB is |
+| 09 | [Datasets and benchmark](09-datasets-and-benchmark.md) | Where the data comes from, and what the benchmark is |
 | 10 | [Metrics](10-metrics.md) | Why "accuracy" is not the number the leaderboard prints |
 | 11 | [Experiments and results](11-experiments.md) | What we ran, what we measured, what it means |
 | 12 | [Code map](12-code-map.md) | Which file does what |

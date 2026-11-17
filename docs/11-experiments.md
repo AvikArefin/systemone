@@ -11,17 +11,17 @@ unless stated otherwise. Commands are in each section.
 
 ## Headline table
 
-Raw accuracy on the S1MB test split, per decision type. **These runs predate the
+Raw accuracy on the test split, per decision type. **These runs predate the
 truncation fix**, so they measure a model that often could not see its options.
 
 | Training data | Examples | noul | choice | score | overall |
 |---|---:|---:|---:|---:|---:|
-| 20 S1MB configs, 6 epochs *(leaks test rows)* | 2,446 | 0.659 | 0.222 | 0.176 | 0.417 |
-| all 106 S1MB configs, 10 epochs *(leaks test rows)* | 26,264 | 0.721 | 0.323 | 0.508 | 0.551 |
+| 20 test configs, 6 epochs *(leaks test rows)* | 2,446 | 0.659 | 0.222 | 0.176 | 0.417 |
+| all 106 test configs, 10 epochs *(leaks test rows)* | 26,264 | 0.721 | 0.323 | 0.508 | 0.551 |
 | bekko corpus 300/subset, 1 epoch | 89,442 | 0.701 | 0.335 | 0.510 | **0.541** |
 | bekko corpus 1000/subset, 2 epochs | 284,877 | 0.698 | 0.308 | 0.526 | 0.534 |
 
-**Do not read these as skill.** Measured on the S1MB test split, the trivial
+**Do not read these as skill.** Measured on the test split, the trivial
 policies already score:
 
 | kind | best trivial policy | accuracy |
@@ -40,7 +40,7 @@ are baseline-adjusted; ours are raw. See [Metrics](10-metrics.md).
 ### The model could not see its candidate
 
 Rows were truncated front-only to 48 tokens. A row is `instructions ␟ candidate`,
-and instructions run to 600+ tokens on S1MB, so the candidate was deleted. Measured
+and instructions run to 600+ tokens in the test split, so the candidate was deleted. Measured
 on the eval cache that shipped:
 
 | | eval | train |
@@ -126,7 +126,7 @@ and the seed is stored in `model.pt`.
 ## Raising the budget at inference makes it worse
 
 With the mask fixed it became safe to ask the original question: does the
-checkpoint score better when it can see more? Evaluated on the full S1MB test
+checkpoint score better when it can see more? Evaluated on the full test
 split (106 configs, 14,009 cases, 26,269 decisions), `scripts/measure_state_budget.py`:
 
 ```
@@ -164,7 +164,7 @@ That is the GPU driver aborting, not the OS killing a process. Two mistakes
 multiplied:
 
 1. **A batch was 16 examples, not 16 rows.** Each example expands into one row per
-   candidate, and an S1MB `choice` can carry thousands — the largest measured is
+   candidate, and a test `choice` can carry thousands — the largest measured is
    2,416. So "16 examples" was up to 2,416 rows.
 2. **The attention mask was a full grid** of shape `[rows, tokens, tokens]`, built
    per forward. At 576 rows and 791 tokens that is 360 MB of booleans before the
@@ -205,7 +205,7 @@ that requires recomputing it. `EncodedSet.collate` now returns one state per
 group plus `group_ids`, and the model runs the state half once per group, then
 gathers its K/V to the rows for the query half.
 
-Measured on 20 S1MB configs (4,399 cases, 41,444 rows, `max_rows=256`), model
+Measured on 20 test configs (4,399 cases, 41,444 rows, `max_rows=256`), model
 time only:
 
 ```
@@ -269,7 +269,7 @@ Both halves of the question answered at once:
   and held-out accuracy falls to 29% (chance 25%) while held-out loss climbs.
   It cannot answer "does this option appear anywhere in this document".
 
-Every task in S1MB needs exactly that: find the option in the state, check whether
+Every benchmark task needs exactly that: find the option in the state, check whether
 the rubric is supported, check whether the claim follows. So this is the missing
 capability, and it is not a context-length, mask, memory, or capacity issue.
 
@@ -473,7 +473,7 @@ only 3% faster. Both are true; the second is the one that matters.
 ## Where the existing checkpoint actually scores
 
 Scoring `artifacts/bekko_tiny` with the new adjusted metric
-(`scripts/eval_s1mb.py`), 12 subsets:
+(`scripts/eval.py`), 12 subsets:
 
 ```
 choice: raw 0.28 vs best trivial 0.29    -> adjusted 0.00
@@ -496,14 +496,14 @@ BEKKO_CASES=300 SYSTEMONE_EPOCHS=1 uv run python scripts/train_main.py
 # larger run, ~2 h
 BEKKO_CASES=1000 SYSTEMONE_EPOCHS=2 SYSTEMONE_BATCH=64 uv run python scripts/train_main.py
 
-# S1MB-config run (trains on the benchmark — comparison only)
+# test-split run (trains on the benchmark — comparison only)
 SYSTEMONE_EPOCHS=10 uv run python scripts/train_comparison.py
 
 # synthetic sanity task, seconds
 uv run python scripts/train_synthetic.py
 
-# baseline-adjusted Task Avg on S1MB (comparable to the published table)
-SYSTEMONE_EVAL_CHECKPOINT=bekko_tiny uv run python scripts/eval_s1mb.py
+# baseline-adjusted Task Avg on the test split (comparable to the published table)
+SYSTEMONE_EVAL_CHECKPOINT=bekko_tiny uv run python scripts/eval.py
 ```
 
 Checkpoint goes to `artifacts/<name>/`; override with
@@ -577,7 +577,7 @@ point, and it is now measurable — which it was not before.
 
 The bekko corpus contains a fourth decision type, `ranking`, which has
 `type: null`, no `criteria`, and its candidates in `documents`. The parser drops
-every one — `agnews` alone is 19,992 decisions, an entire subset. `S1MB` contains
+every one — `agnews` alone is 19,992 decisions, an entire subset. The test split contains
 no `ranking` decisions, so scores are unaffected; this is training data left on
 the table. The drop warning now names it (`unsupported:ranking`) instead of printing
 an opaque `None`.

@@ -88,8 +88,8 @@ From the measured runs on this machine (MPS):
 
 | run | examples | batch | steps/epoch | seconds/epoch |
 |---|---:|---:|---:|---:|
-| S1MB slice, 6 epochs | 1,947 | 32 | 61 | ~66 |
-| S1MB all configs, 10 epochs | 21,148 | 32 | 661 | ~249 |
+| test slice, 6 epochs | 1,947 | 32 | 61 | ~66 |
+| all 106 test configs, 10 epochs | 21,148 | 32 | 661 | ~249 |
 | bekko corpus, 2 epochs | 284,877 | 64 | 4,452 | ~3,670 |
 
 The model is small; the data is the wall clock.

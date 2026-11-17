@@ -179,7 +179,7 @@ class EncodedSet:
         """Group example indices so each batch stays under `max_rows` rows.
 
         A batch holds examples, and an example expands into one row per
-        candidate -- an S1MB choice can carry thousands. Bounding the example
+        candidate -- a test choice can carry thousands. Bounding the example
         count therefore bounds nothing; rows are what the attention cost grows
         with, so rows is the number that has to be capped.
         """
