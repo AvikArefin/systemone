@@ -119,7 +119,7 @@ wrong; it is now measured rather than computed. See
 
 ### Seeding
 
-`scripts/train_s1mb.py` originally did not seed at all, so every run initialised
+`scripts/train_comparison.py` originally did not seed at all, so every run initialised
 differently. Now every script calls `set_seed(seed)` and `build_model(cfg, seed)`,
 and the seed is stored in `model.pt`.
 
@@ -491,16 +491,16 @@ conclusion from it.
 
 ```bash
 # clean corpus run, ~20 min on MPS
-BEKKO_CASES=300 SYSTEMONE_EPOCHS=1 uv run python scripts/train_bekko.py
+BEKKO_CASES=300 SYSTEMONE_EPOCHS=1 uv run python scripts/train_main.py
 
 # larger run, ~2 h
-BEKKO_CASES=1000 SYSTEMONE_EPOCHS=2 SYSTEMONE_BATCH=64 uv run python scripts/train_bekko.py
+BEKKO_CASES=1000 SYSTEMONE_EPOCHS=2 SYSTEMONE_BATCH=64 uv run python scripts/train_main.py
 
 # S1MB-config run (trains on the benchmark — comparison only)
-SYSTEMONE_EPOCHS=10 uv run python scripts/train_s1mb.py
+SYSTEMONE_EPOCHS=10 uv run python scripts/train_comparison.py
 
 # synthetic sanity task, seconds
-uv run python scripts/train_demo.py
+uv run python scripts/train_synthetic.py
 
 # baseline-adjusted Task Avg on S1MB (comparable to the published table)
 SYSTEMONE_EVAL_CHECKPOINT=bekko_tiny uv run python scripts/eval_s1mb.py

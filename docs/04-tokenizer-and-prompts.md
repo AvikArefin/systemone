@@ -242,7 +242,7 @@ variant is measured on the same sample.
 every checkpoint trained against the old one meaningless. The fingerprint guard
 already refuses a mismatch (`VocabMismatch`); see
 [Data pipeline](05-data-pipeline.md#the-same-fingerprint-guards-the-weights).
-`train_bekko.py` reuses an existing `tokenizer.model`, so building the new
+`train_main.py` reuses an existing `tokenizer.model`, so building the new
 vocabulary means deleting it or using a different checkpoint name.
 
 Reproduce the table with `uv run python scripts/build_tokenizers.py`. It reads

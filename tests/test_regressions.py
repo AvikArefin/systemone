@@ -239,7 +239,7 @@ class TestTemperaturesLeaked:
         from pathlib import Path
 
         root = Path(__file__).resolve().parents[1] / "scripts"
-        for name in ("train_bekko.py", "train_s1mb.py"):
+        for name in ("train_main.py", "train_comparison.py"):
             source = (root / name).read_text()
             assert "fit_temperatures(train_collected)" in source, (
                 f"{name} must fit temperatures on the train split"

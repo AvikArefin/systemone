@@ -26,9 +26,10 @@ src/systemone/
   inference.py  answer_request: one request in, typed answers out
   checkpoint.py save/load under artifacts/<name>/
 scripts/
-  train_bekko.py  train on the bekko typed-decision corpus
-  train_s1mb.py   train/evaluate on S1MB configs
-  train_demo.py   small synthetic task, end-to-end
+  train_main.py             train on bekko, evaluate on S1MB test
+  train_comparison.py       train on S1MB configs (comparison only)
+  train_legacy.py           train on JevBench (superseded)
+  train_synthetic.py        small synthetic task, end-to-end
   smoke.py        construction/inference sanity check
 ```
 
@@ -37,8 +38,8 @@ scripts/
 ```bash
 uv sync
 uv run python scripts/smoke.py
-uv run python scripts/train_bekko.py          # BEKKO_CASES=1000, epochs=2
-uv run python scripts/train_demo.py
+uv run python scripts/train_main.py           # BEKKO_CASES=1000, epochs=2
+uv run python scripts/train_synthetic.py
 uv run python scripts/eval_s1mb.py            # baseline-adjusted Task Avg
 ```
 

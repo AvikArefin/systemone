@@ -111,7 +111,7 @@ scalar" — which is a statement about the model, not a bug to fix with a wider 
 Both edges mean the same thing in different directions:
 
 - **Hits `0.25`** (the floor): the model is *under*confident and wants sharpening
-  beyond the grid. A well-trained model on an easy task does this — `train_demo.py`
+  beyond the grid. A well-trained model on an easy task does this — `train_synthetic.py`
   prints three such warnings at 100% accuracy, which is correct, not alarming.
 - **Hits `10.0`** (the ceiling): the model is *over*confident, and the near-flat
   curve means no single `T` fixes it. This is the case to worry about.

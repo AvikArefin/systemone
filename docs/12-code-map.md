@@ -29,10 +29,10 @@ Every file, what it does, and where to look when you want to change something.
 | Script | Purpose | Typical runtime |
 |---|---|---|
 | [`smoke.py`](../scripts/smoke.py) | Construct a model, run one request, check shapes | seconds |
-| [`train_demo.py`](../scripts/train_demo.py) | Synthetic 3-task demo, end-to-end with calibration | ~30 s |
-| [`train_bekko.py`](../scripts/train_bekko.py) | Train on the bekko corpus, evaluate on S1MB test | 20 min – 2 h |
-| [`train_s1mb.py`](../scripts/train_s1mb.py) | Train on S1MB configs (contaminates the benchmark — comparison only) | ~40 min |
-| [`train_jevbench_bpe.py`](../scripts/train_jevbench_bpe.py) | Train on JevBench with a trained BPE tokenizer | ~20 min |
+| [`train_synthetic.py`](../scripts/train_synthetic.py) | Synthetic 3-task demo, end-to-end with calibration | ~30 s |
+| [`train_main.py`](../scripts/train_main.py) | Train on the bekko corpus, evaluate on S1MB test | 20 min – 2 h |
+| [`train_comparison.py`](../scripts/train_comparison.py) | Train on S1MB configs (contaminates the benchmark — comparison only) | ~40 min |
+| [`train_legacy.py`](../scripts/train_legacy.py) | Train on JevBench with a trained BPE tokenizer | ~20 min |
 | [`measure_budget.py`](../scripts/measure_budget.py) | Measure what each query budget preserves on S1MB, per decision kind | minutes |
 | [`measure_state_budget.py`](../scripts/measure_state_budget.py) | Score a checkpoint at several state/query budgets, whole split and on the rows the cap cut | 5 – 30 min |
 | [`measure_attention_memory.py`](../scripts/measure_attention_memory.py) | Mask tensor size and attention time per mask strategy | seconds |

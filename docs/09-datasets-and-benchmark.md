@@ -205,6 +205,6 @@ The Arrow files are what `load_dataset` actually reads. First bekko load took
 `load_jevbench()` and `split_by_case()` are the earlier JevBench loader. It reads
 a `questions` config and groups examples by `case_id` so that all decisions about
 one case stay on the same side of a train/test split. Still used by
-`scripts/train_jevbench_bpe.py`; superseded by the S1MB corpus loaders.
+`scripts/train_legacy.py`; superseded by the S1MB corpus loaders.
 
 Next: [Metrics →](10-metrics.md)
