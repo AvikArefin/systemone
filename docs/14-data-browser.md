@@ -69,7 +69,11 @@ pieces, `▁probabilities` four).
 
 Three panes follow: **configs** → **cases** → **one case**.
 
-- **Configs** are the dataset families in the cache, filterable by name.
+- **Configs** are the dataset families in the cache, filterable by name. The 32
+  that overflow even a 1024/320 budget are marked `unfit` (hover for the
+  measured number); **hide unfit (1024/320)** drops them from the list and moves
+  off one if it is open. The mark comes from `corpus.UNFIT_CONFIGS`; see
+  [Datasets](09-datasets-and-benchmark.md#configs-that-cannot-fit-even-at-1024320).
 - **Cases** list case ids with decision count, kind badges, and document length.
   The first box filters by case id; the second **jumps** to one: type part of an
   id, press enter, and that case opens with its neighbours in the list.

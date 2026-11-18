@@ -34,11 +34,11 @@
   button, input, select { font: inherit; color: inherit; }
 
   header {
-    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    display: flex; align-items: center; gap: 10px; flex-wrap: nowrap;
     padding: 9px 16px; border-bottom: 1px solid var(--line-strong);
-    background: var(--panel);
+    background: var(--panel); min-width: 0;
   }
-  .brand { font-weight: 640; letter-spacing: -0.01em; }
+  .brand { font-weight: 640; letter-spacing: -0.01em; white-space: nowrap; flex: 0 0 auto; }
   .brand span { color: var(--ink-faint); font-weight: 450; }
   .chip {
     font: 12px/1 var(--mono); color: var(--ink-soft); background: var(--paper);
@@ -47,8 +47,12 @@
   select {
     padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 6px;
     background: var(--panel); font: 12.5px var(--mono);
+    flex: 1 1 0; min-width: 0; max-width: 240px;
   }
-  .budget { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+  #repo-select { max-width: 280px; }
+  #split-select { max-width: 110px; }
+  #tokenizer-select { max-width: 240px; }
+  .budget { display: flex; align-items: center; gap: 6px; margin-left: auto; flex: 0 0 auto; }
   .budget label { font-size: 12px; color: var(--ink-soft); }
   .budget input {
     width: 62px; padding: 5px 7px; border: 1px solid var(--line-strong);
@@ -56,7 +60,7 @@
   }
   .budget button, .ghost {
     padding: 6px 11px; border: 1px solid var(--accent); border-radius: 6px;
-    background: var(--accent); color: #fff; cursor: pointer;
+    background: var(--accent); color: #fff; cursor: pointer; flex: 0 0 auto;
   }
   .budget button:hover { background: #8e4514; }
   .ghost {
@@ -80,6 +84,17 @@
   }
   .config:hover { background: #efe9dd; color: var(--ink); }
   .config[aria-current="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .config.unfit { color: var(--ink-faint); }
+  .config.unfit[aria-current="true"] { background: var(--drop-soft); color: var(--drop); }
+  .unfit-tag {
+    float: right; margin-left: 8px; font: 9.5px/1.7 var(--mono);
+    letter-spacing: 0.04em; text-transform: uppercase; color: var(--drop);
+  }
+  .fit-toggle {
+    display: flex; align-items: center; gap: 6px; margin: -2px 0 8px;
+    font-size: 12px; color: var(--ink-soft); cursor: pointer;
+  }
+  .fit-toggle input { margin: 0; accent-color: var(--accent); }
 
   .search, .jump {
     width: 100%; padding: 7px 9px; border: 1px solid var(--line-strong);
@@ -242,6 +257,13 @@
   tr.dead td { color: var(--drop); }
   tr.dead td.piece { color: var(--drop); }
   .legend { font-size: 11.5px; color: var(--ink-faint); padding: 0 18px 14px; }
+  @media (max-width: 1080px) {
+    .brand span { display: none; }
+  }
+  @media (max-width: 760px) {
+    header { flex-wrap: wrap; }
+    .budget { margin-left: 0; }
+  }
   @media (max-width: 900px) {
     main { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; }
     .pane { border-right: 0; border-bottom: 1px solid var(--line); max-height: 32vh; }
@@ -254,7 +276,6 @@
   <select id="repo-select" aria-label="Dataset repository"></select>
   <select id="split-select" aria-label="Split"></select>
   <select id="tokenizer-select" aria-label="Tokenizer"></select>
-  <span class="chip" id="tokinfo">…</span>
   <button class="ghost" id="vocab-button">vocab</button>
   <button class="ghost" id="foreign-button" title="Which configs contain foreign characters or emoji">foreign</button>
   <form class="budget" id="budget-form">
@@ -269,6 +290,9 @@
 <main>
   <section class="pane" id="rail" aria-label="Configurations">
     <h2>configs</h2>
+    <label class="fit-toggle" title="Marked unfit at the 1024/320 budget">
+      <input type="checkbox" id="fit-only"> hide unfit (1024/320)
+    </label>
     <input class="search" id="config-filter" type="search" placeholder="filter configs…" aria-label="Filter configs">
     <div id="configs"><p class="empty">loading…</p></div>
   </section>
@@ -366,7 +390,7 @@ const plural = (count, one, many = `${one}s`) => `${num(count)} ${count === 1 ? 
 
 const state = {
   repos: [], repo: null, split: null, configs: [], config: null,
-  cases: [], total: 0, offset: 0, filter: "", configFilter: "",
+  cases: [], total: 0, offset: 0, filter: "", configFilter: "", fitOnly: false,
   selected: null, detail: null, tab: "doc", tokens: true, decTokens: false,
   stateBudget: 192, queryBudget: 64, loading: false,
   vocab: null, vocabFilter: "", vocabSort: "count", vocabUnused: false,
@@ -447,6 +471,12 @@ function renderSplitSelect() {
 
 function renderTokenizerSelect() {
   const select = el("tokenizer-select");
+  if (!state.tokenizers.length) {
+    select.innerHTML = '<option value="">no tokenizer</option>';
+    select.disabled = true;
+    select.title = "";
+    return;
+  }
   select.innerHTML = state.tokenizers.map((entry) =>
     `<option value="${esc(entry.key)}" ${entry.key === state.tokenizerKey ? "selected" : ""}>
       ${esc(entry.label)} · ${num(entry.vocab)} pieces${
@@ -454,10 +484,11 @@ function renderTokenizerSelect() {
       }</option>`).join("");
   select.disabled = state.tokenizers.length < 2;
   const entry = state.tokenizers.find((item) => item.key === state.tokenizerKey);
-  el("tokinfo").textContent = entry
-    ? `vocab ${num(entry.vocab)}${entry.foreign_singles ? ` · ${num(entry.foreign_singles)} foreign` : ""}`
-    : "no tokenizer";
-  el("tokinfo").title = entry && entry.description ? entry.description : "";
+  select.title = entry
+    ? [entry.label, entry.description, `${num(entry.vocab)} pieces`,
+       entry.foreign_singles ? `${num(entry.foreign_singles)} foreign singles` : ""]
+        .filter(Boolean).join(" · ")
+    : "";
 }
 
 async function selectRepo(repo, split = null, config = null) {
@@ -489,9 +520,16 @@ async function selectConfig(name, split = null, sync = true) {
 function renderConfigs() {
   const filter = state.configFilter.toLowerCase();
   el("configs").innerHTML = state.configs
+    .filter((item) => !state.fitOnly || !item.unfit)
     .filter((item) => !filter || item.name.toLowerCase().includes(filter))
-    .map((item) => `<button class="config" data-config="${esc(item.name)}"
-      aria-current="${item.name === state.config}">${esc(item.name)}</button>`).join("");
+    .map((item) => {
+      const tag = item.unfit
+        ? `<span class="unfit-tag" title="${esc(item.unfit)}">unfit</span>`
+        : "";
+      const title = item.unfit ? ` title="over 1024/320: ${esc(item.unfit)}"` : "";
+      return `<button class="config${item.unfit ? " unfit" : ""}" data-config="${esc(item.name)}"
+      aria-current="${item.name === state.config}"${title}>${tag}${esc(item.name)}</button>`;
+    }).join("");
 }
 
 async function loadPage(jump = "") {
@@ -897,6 +935,19 @@ el("search").addEventListener("input", (event) => {
 
 el("config-filter").addEventListener("input", (event) => {
   state.configFilter = event.target.value.trim();
+  renderConfigs();
+});
+
+el("fit-only").addEventListener("change", async (event) => {
+  state.fitOnly = event.target.checked;
+  const current = currentConfig();
+  if (state.fitOnly && current && current.unfit) {
+    const next = state.configs.find((item) => !item.unfit);
+    if (next) {
+      await selectConfig(next.name);
+      return;
+    }
+  }
   renderConfigs();
 });
 

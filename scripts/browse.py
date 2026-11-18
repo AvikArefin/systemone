@@ -24,7 +24,7 @@ for name in ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE"):
 from systemone.bpe import SentencePieceTokenizer, is_foreign
 from systemone.paths import CHECKPOINT_DIR
 from systemone.prompt import choice_query, noul_query, score_query
-from systemone.corpus import BEKKO_REPO, parse_decision, render_state
+from systemone.corpus import BEKKO_REPO, UNFIT_CONFIGS, parse_decision, render_state
 from systemone.schema import Choice, Noul
 from systemone.tokenizer import truncate_head_tail
 
@@ -279,7 +279,13 @@ class Store:
             for config in cached_configs(repo):
                 splits = sorted(split_files(repo, config))
                 if splits:
-                    configs.append({"name": config, "splits": splits})
+                    configs.append(
+                        {
+                            "name": config,
+                            "splits": splits,
+                            "unfit": UNFIT_CONFIGS.get(config),
+                        }
+                    )
             repos.append({"name": repo, "role": role, "configs": configs})
         return {
             "repos": repos,
