@@ -10,6 +10,7 @@ from systemone.calibrate import (
     accuracy,
     accuracy_by_kind,
     collect_logits,
+    collected_loss,
     expected_calibration_error,
     fit_temperatures,
 )
@@ -19,7 +20,7 @@ from systemone.corpus import (
     load_train,
     train_configs,
 )
-from systemone.train import evaluate, train
+from systemone.train import train
 
 SEED = 0
 NAME = os.environ.get("SYSTEMONE_NAME", "bekko_tiny")
@@ -38,18 +39,15 @@ DEV = os.environ.get("SYSTEMONE_DEV", "0") == "1"
 INCLUDE_UNFIT = os.environ.get("SYSTEMONE_INCLUDE_UNFIT", "0") == "1"
 
 if DEV:
-    # Fast loop: fewer configs, fewer candidates per case, a probe eval each
-    # epoch, and the full split only at the end. Its own name so it cannot
-    # reuse the full run's tokenizer or data cache.
+    # Fast loop: fewer configs, fewer candidates per case, and a smaller data cap.
+    # Its own name so it cannot reuse the full run's tokenizer or data cache.
     NAME = f"{NAME}_dev"
     CONFIG_LIMIT = CONFIG_LIMIT or 5
     MAX_CASES = min(MAX_CASES, 200)
     MAX_ROWS = min(MAX_ROWS, 128)
     BF16 = True
-    PROBE = 2000
     MAX_CANDIDATES = 4
 else:
-    PROBE = 0
     MAX_CANDIDATES = 8
 
 set_seed(SEED)
@@ -108,7 +106,6 @@ print(f"params={cfg.parameter_count():,} ({cfg.parameter_count() / 1e6:.2f}M)")
 print(f"budget={STATE_TOKENS}/{QUERY_TOKENS} rows={MAX_ROWS} accum={GRAD_ACCUM} "
       f"checkpoint={CHECKPOINT} bf16={BF16}")
 
-full_test_set = test_set
 if FIT_ONLY:
     kept_train = filter_to_budget(train_set, tokenizer, cfg)
     kept_test = filter_to_budget(test_set, tokenizer, cfg)
@@ -120,24 +117,30 @@ if FIT_ONLY:
 suffix = "_fit" if FIT_ONLY else ""
 train_data = load_or_build(directory / f"bekko_train_cache{suffix}.pt", train_set, tokenizer, cfg)
 test_data = load_or_build(directory / f"test_cache{suffix}.pt", test_set, tokenizer, cfg)
-# The same model measured both ways: the fit-only subset is the number worth
-# reporting, the full split shows what truncation costs by comparison.
-full_test_data = (
-    load_or_build(directory / "test_cache.pt", full_test_set, tokenizer, cfg)
-    if FIT_ONLY
-    else None
-)
-# Dev mode evaluates a fixed probe each epoch and the full split only at the end.
-probe_data = (
-    load_or_build(directory / "probe_cache.pt", test_set[:PROBE], tokenizer, cfg)
-    if PROBE
-    else test_data
-)
 print(
     f"cache train={len(train_data)} test={len(test_data)} "
     f"state_tokens={train_data.state_data.numel():,} "
     f"query_tokens={train_data.query_data.numel():,}"
 )
+
+# Evaluation is sized to the training set, never larger: measuring on 5x the data
+# the model sees is not more honest, it is just slower. The probe is what we
+# monitor each epoch and is capped at the training size; the whole held-out split
+# is scored exactly once, at the end.
+probe_size = min(len(test_data), len(train_data))
+if probe_size >= len(test_data):
+    probe_data = test_data
+else:
+    # Spread the probe across configs instead of taking the first N, which would
+    # be the first few configs only.
+    per_config = max(1, probe_size // max(1, len(test_grouped)))
+    probe_examples = [
+        example
+        for case in test_grouped.values()
+        for example in case[:per_config]
+    ][:probe_size]
+    probe_data = load_or_build(directory / "probe_cache.pt", probe_examples, tokenizer, cfg)
+print(f"eval probe={len(probe_data)} (test {len(test_data)}, train {len(train_data)})")
 
 state_file = directory / "training_state.pt"
 resume = torch.load(state_file, weights_only=False) if (RESUME and state_file.exists()) else None
@@ -148,7 +151,6 @@ def save_state(epoch, state):
     torch.save(state, state_file)
     print(f"  saved state at epoch {epoch}")
 
-before = evaluate(model, probe_data, device=device)
 started = time.perf_counter()
 history = train(
     model,
@@ -172,19 +174,18 @@ print(f"steps={len(history.losses)}")
 print(f"eval_curve={[(e, round(v, 4)) for e, v in history.evals]}")
 print(f"loss first={history.losses[0]:.4f} last={history.losses[-1]:.4f}")
 
-after = evaluate(model, test_data, device=device)
+# One pass over the held-out split produces both the loss and the logits used for
+# accuracy and calibration. Running `evaluate` and then `collect_logits` walked the
+# same examples twice to compute two things from one forward pass.
+collected = collect_logits(model, test_data, device=device, max_rows=MAX_ROWS, bf16=BF16)
+after = collected_loss(collected)
 scope = "fit-only" if FIT_ONLY else "full split"
-print(f"eval before={before:.4f} after={after:.4f} ({scope})")
-if full_test_data is not None:
-    print(f"same model on the full split (truncated)={evaluate(model, full_test_data, device=device):.4f}")
-
-train_collected = collect_logits(model, train_data, device=device)
-collected = collect_logits(model, test_data, device=device)
-print("train_acc", {k: round(v, 3) for k, v in accuracy_by_kind(train_collected).items()})
+print(f"eval_loss={after:.4f} ({scope}, {len(test_data)} examples)")
 print("test_acc", {k: round(v, 3) for k, v in accuracy_by_kind(collected).items()})
 print(f"accuracy={accuracy(collected):.3f}")
 # fit on train: fitting on the eval split would report calibration the model
 # was optimised for, which is leakage
+train_collected = collect_logits(model, train_data, device=device, max_rows=MAX_ROWS, bf16=BF16)
 temperatures = fit_temperatures(train_collected)
 print(f"ece_before={expected_calibration_error(collected):.4f}")
 print("temperatures", {k: round(v, 3) for k, v in temperatures.items()})

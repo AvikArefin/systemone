@@ -1,3 +1,4 @@
+import contextlib
 import math
 
 import torch
@@ -15,16 +16,26 @@ def collect_logits(
     dataset: EncodedSet,
     device: torch.device | None = None,
     max_rows: int = 256,
+    bf16: bool = False,
 ) -> dict[str, list[tuple[Tensor, float]]]:
     device = device or next(model.parameters()).device
     model.to(device).eval()
     collected: dict[str, list[tuple[Tensor, float]]] = {kind: [] for kind in KIND_ORDER}
+    context = (
+        torch.autocast(device.type, dtype=torch.bfloat16)
+        if bf16
+        else contextlib.nullcontext()
+    )
     with torch.no_grad():
-        for chunk in dataset.batches(max_rows):
+        # Length-ordered like `evaluate`, for the same reason: no gradient, so
+        # order only changes how much padding the pass pays.
+        for chunk in dataset.batches(max_rows, by_length=True):
             batch = dataset.collate(chunk).to(device)
-            logits = model(
-                batch.state_ids, batch.state_mask, batch.query_ids, batch.query_mask, batch.group_ids
-            )
+            with context:
+                logits = model(
+                    batch.state_ids, batch.state_mask, batch.query_ids,
+                    batch.query_mask, batch.group_ids,
+                )
             for group in range(len(batch.kinds)):
                 index = (batch.group_ids == group).nonzero(as_tuple=True)[0]
                 collected[batch.kinds[group]].append(
@@ -51,6 +62,23 @@ def _nll_by_temperature(
     groups: list[tuple[Tensor, float]], kind: str, grid: list[float]
 ) -> list[float]:
     return [_nll(groups, temperature, kind) for temperature in grid]
+
+
+def collected_loss(collected: dict[str, list[tuple[Tensor, float]]]) -> float:
+    """Mean loss per decision from logits already collected.
+
+    `evaluate` walks a whole split again to produce this number; when the logits
+    are already in hand there is no reason to pay for a second forward pass.
+    """
+    total = 0.0
+    count = 0
+    for kind in KIND_ORDER:
+        groups = collected[kind]
+        if not groups:
+            continue
+        total += _nll(groups, 1.0, kind)
+        count += len(groups)
+    return total / count if count else float("nan")
 
 
 def is_identifiable(

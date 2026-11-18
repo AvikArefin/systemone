@@ -114,15 +114,50 @@ From the measured runs on this machine (MPS):
 
 The model is small; the data is the wall clock.
 
+## Evaluation is part of the wall clock
+
+A training step and an evaluation step are not symmetric: evaluation has no
+backward pass, so it runs about **4x faster per example**. That makes it easy to
+assume eval is nearly free. It is not, because it used to be paid several times
+over, on a split much larger than the training set.
+
+What `scripts/train_main.py` used to do per epoch, training on a `BEKKO_CASES=300`
+slice (3,126 examples) against a 14,903-example held-out split:
+
+| pass | examples | cost |
+|---|---:|---|
+| evaluate before training | 14,903 | ~37 s |
+| evaluate each epoch | 14,903 | ~37 s |
+| evaluate after training | 14,903 | ~37 s |
+| `collect_logits` on test, twice | 14,903 | ~33 s each |
+
+Training that epoch took 32 s. **Evaluation was the majority of the run**, and
+one of the two `collect_logits` passes was redundant with the `evaluate` next to
+it — both were computed from the same forward pass over the same examples.
+
+Three rules now:
+
+1. **Measure on no more data than you train on.** The per-epoch probe is capped at
+   the training-set size and spread across configs rather than taken as the first
+   N. Reporting a loss on 5x the training data is not more honest, just slower.
+2. **Score the held-out split once, at the end.** There is no "before" number: an
+   untrained model's loss is not something anyone acts on.
+3. **One pass, many metrics.** `collect_logits` returns the logits that both
+   `collected_loss` and the calibration need, so `evaluate` no longer walks the
+   split a second time for a number already in hand.
+
+`collect_logits` also now takes `bf16` and walks length-ordered batches. It was
+the only evaluation path still in fp32 and natural order.
+
 ## Fast iteration
 
 A 2-epoch pass over the full corpus is roughly 3,700 s per epoch, which makes it
-useless as a loop. `SYSTEMONE_DEV=1` shrinks everything except the model:
+useless as a loop. `SYSTEMONE_DEV=1` shrinks data, configs, and candidates:
 
 ```
 configs 5          200 cases each       max_candidates 4
-rows 128           bf16 on              probe eval (2,000 test examples) each epoch
-name <name>_dev    full split evaluated once, at the end
+rows 128           bf16 on              same eval policy as a full run
+name <name>_dev
 ```
 
 The `<name>_dev` suffix matters: it keeps the dev run away from the real
