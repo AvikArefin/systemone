@@ -46,6 +46,103 @@ def test_batches_cover_every_example_once_and_respect_the_row_cap(tokenizer, cfg
         assert sum(counts[index] for index in batch) <= 4
 
 
+def test_lengths_report_the_shape_each_example_pads_its_batch_to(tokenizer, cfg):
+    """Length is longest state plus longest query, which is the padded shape."""
+    encoded = EncodedSet.build(_examples(), tokenizer, cfg)
+    state = (encoded.state_offsets[1:] - encoded.state_offsets[:-1]).tolist()
+    query = (encoded.query_offsets[1:] - encoded.query_offsets[:-1]).tolist()
+    counts = encoded.row_counts()
+
+    lengths = encoded.lengths()
+    assert len(lengths) == len(encoded)
+    rows = 0
+    for index, length in enumerate(lengths):
+        longest_query = max(query[rows : rows + counts[index]])
+        assert length == state[index] + longest_query
+        rows += counts[index]
+
+
+def test_bucketing_covers_every_example_once_and_cuts_padding(tokenizer, cfg):
+    """Bucketing by length must respect the row cap and pad less than natural order.
+
+    The gain is the whole point: a batch pads to its longest state and query, so
+    a short example in a long batch pays for tokens it does not have.
+    """
+    examples = [
+        Example(state="short", question=Noul(instructions="ok?"), label=True),
+        Example(state="word " * 20, question=Noul(instructions="ok?"), label=False),
+        Example(state="word " * 5, question=Noul(instructions="ok?"), label=True),
+        Example(state="word " * 12, question=Noul(instructions="ok?"), label=True),
+    ]
+    encoded = EncodedSet.build(examples, tokenizer, cfg)
+    counts = encoded.row_counts()
+    lengths = encoded.lengths()
+
+    bucketed = encoded.batches(max_rows=2, by_length=True)
+    assert sorted(index for batch in bucketed for index in batch) == list(range(len(encoded)))
+    for batch in bucketed:
+        assert sum(counts[index] for index in batch) <= 2
+
+    def padded(batches):
+        return sum(max(lengths[index] for index in batch) for batch in batches)
+
+    natural = encoded.batches(max_rows=2)
+    assert padded(bucketed) < padded(natural), "bucketing must reduce padding"
+    assert max(lengths[i] for i in bucketed[0]) <= max(lengths[i] for i in bucketed[-1])
+
+
+def test_bucketed_order_keeps_batches_mixed_when_length_predicts_the_label(tokenizer, cfg):
+    """Length-ordered batches must not become label-homogeneous.
+
+    A global length sort is the obvious optimisation and it is wrong: if text
+    length predicts the label (`charlie` is longer than `alpha`), sorting by
+    length groups one label per batch. Bands shuffled inside keep the padding
+    win without that correlation.
+    """
+    import random
+
+    examples = [
+        Example(
+            state=f"the signal word is {cue}",
+            question=Choice(instructions="which signal?", criteria=["a", "b", "c"]),
+            label=label,
+        )
+        for label, cue in [("a", "alpha"), ("b", "bravo"), ("c", "charlie")] * 8
+    ]
+    encoded = EncodedSet.build(examples, tokenizer, cfg)
+    order = encoded.bucketed_order(random.Random(0))
+
+    assert sorted(order) == list(range(len(encoded))), "every example exactly once"
+    labels = [examples[index].label for index in order]
+    for start in range(0, len(labels), 8):
+        batch = labels[start : start + 8]
+        assert len(set(batch)) > 1, f"batch {start // 8} is label-homogeneous: {batch}"
+
+
+def test_bucketed_order_still_cuts_padding(tokenizer, cfg):
+    """Bands are narrow enough that batches pad far less than a plain shuffle."""
+    import random
+
+    lengths = [4, 6, 8, 10, 40, 42, 44, 46, 100, 102, 104, 106]
+    examples = [
+        Example(state="word " * count, question=Noul(instructions="ok?"), label=True)
+        for count in lengths
+    ]
+    encoded = EncodedSet.build(examples, tokenizer, cfg)
+    padded_lengths = encoded.lengths()
+    order = encoded.bucketed_order(random.Random(0), bucket_tokens=16)
+
+    def padded(indices_batches):
+        return sum(max(padded_lengths[i] for i in batch) for batch in indices_batches)
+
+    shuffled = list(range(len(encoded)))
+    random.Random(0).shuffle(shuffled)
+    batching = lambda order_: [
+        order_[start : start + 3] for start in range(0, len(order_), 3)
+    ]
+    assert padded(batching(order)) < padded(batching(shuffled))
+
+
 def test_one_huge_example_forms_its_own_batch(tokenizer, cfg):
     """A 2,000-candidate choice must not drag other examples into its grid."""
     wide = Example(

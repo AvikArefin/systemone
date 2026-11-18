@@ -83,7 +83,7 @@ def evaluate(
     total = 0.0
     count = 0
     with torch.no_grad():
-        for chunk in dataset.batches(max_rows):
+        for chunk in dataset.batches(max_rows, by_length=True):
             batch = dataset.collate(chunk).to(device)
             with _precision(device, bf16):
                 logits = model(
@@ -115,6 +115,7 @@ def train(
     grad_accum: int = 1,
     checkpoint: bool = False,
     bf16: bool = False,
+    bucket: bool = True,
     resume: dict | None = None,
     on_epoch_end: Callable[[int, dict], None] | None = None,
 ) -> History:
@@ -122,6 +123,11 @@ def train(
 
     `epochs` is the target total, not a count of additional epochs: resuming at
     epoch 2 with `epochs=6` runs epochs 3-6 and keeps one continuous schedule.
+
+    `bucket` visits each epoch in length bands, which changes only padding, never
+    the loss or which examples share a batch window over a full run. Kept
+    switchable so the measurement in [Experiments](../docs/11-experiments.md)
+    can be reproduced per epoch.
 
     `resume` is the dict returned in `History.state()` and `on_epoch_end`
     receives a fresh one after each epoch, so the caller decides where it lives.
@@ -132,7 +138,15 @@ def train(
         model.parameters(), lr=lr, weight_decay=weight_decay
     )
 
-    steps_per_epoch = math.ceil(len(dataset.batches(max_rows)) / grad_accum)
+    # Count chunks the same way the loop will build them, or the schedule is
+    # sized for a different number of steps than the epoch actually takes.
+    counted = (
+        dataset.bucketed_order(random.Random(seed))
+        if bucket
+        else list(range(len(dataset)))
+    )
+    chunks_per_epoch = len(list(_chunks(dataset, counted, max_rows)))
+    steps_per_epoch = math.ceil(chunks_per_epoch / grad_accum)
     total_steps = max(1, steps_per_epoch * epochs)
     warmup_steps = int(total_steps * warmup_fraction)
 
@@ -144,7 +158,6 @@ def train(
         return min_lr_ratio + (1.0 - min_lr_ratio) * cosine
 
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimiser, schedule)
-    order = list(range(len(dataset)))
     rng = random.Random(seed)
     history = History()
     step = 0
@@ -175,7 +188,13 @@ def train(
         scheduler.load_state_dict(resume["scheduler"])
 
     for epoch in range(start_epoch, epochs):
-        rng.shuffle(order)
+        order = (
+            dataset.bucketed_order(rng)
+            if bucket
+            else list(range(len(dataset)))
+        )
+        if not bucket:
+            rng.shuffle(order)
         chunks = list(_chunks(dataset, order, max_rows))
         for start in range(0, len(chunks), grad_accum):
             window = chunks[start : start + grad_accum]

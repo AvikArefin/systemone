@@ -436,14 +436,16 @@ Together they put 1024/384 at 32 rows inside 3.8 GB, a third of what plain
 768/128 needed. The ceiling was never the token budget; it was the shape of the
 loop.
 
-## Bucketing by length was measured and rejected
+## Bucketing by length: rejected at 192, adopted at 1024
 
-The remaining waste is padding: 1.41× of attention work is tokens that exist only
-to make the batch rectangular. The obvious fix is to group rows by exact state
-length so no padding exists — no state padding means the state call needs no
-mask, and the causal rule collapses to one tensor for the whole batch.
+The remaining waste is padding. Every batch pads its rows to the longest state
+and the longest query it holds, so one long example makes every short example in
+the batch pay for tokens it does not have.
 
-It was implemented and benchmarked, and it does not pay:
+At the deployed 192/64 budget that waste is small (1.41× of attention work), and
+exact length grouping was measured and rejected: lengths scatter across 1–192, so
+grouping fragments the batches into 63% more launches, and the padding it removes
+is cheaper than the overhead it adds.
 
 ```
                 batches   eval time
@@ -451,9 +453,47 @@ natural order       227        9.0 s
 length-bucketed     371        9.1 s
 ```
 
-Lengths scatter across 1–192, so exact grouping fragments the batches: 63% more
-batches, each with its own launch. The padding it removes is cheaper than the
-overhead it adds. Reverted; `batches()` visits examples in dataset order.
+At a 1024/320 budget the trade-off flips, because the spread is far wider. On
+3,126 real fit-only rows, which average 53 state tokens, natural order padded to
+**10.4×** the real state tokens; grouping by length cuts that to 2.3×. The waste
+grows with the batch cap, since more examples share one longest row:
+
+```
+max_rows   natural   bucketed   batches   saved
+      16     6.94x      2.22x       716   68.1%
+      32    10.44x      2.28x       348   78.1%
+      64    14.37x      2.36x       171   83.6%
+     128    18.96x      2.70x        85   85.8%
+     256    23.89x      3.15x        42   86.8%
+```
+
+**A global sort is the wrong implementation.** It pads well but correlates batch
+composition with whatever length correlates with. The test fixtures make that
+concrete: the label *is* the length (`charlie` is longer than `alpha`/`bravo`), so
+a global length sort produced label-homogeneous batches and the loss stopped
+decreasing. A test now pins that.
+
+The shipped version groups into 16-token bands and shuffles inside each band:
+narrow bands so a batch still pads close to its own shape, random membership so no
+batch is label-homogeneous by construction. `EncodedSet.bucketed_order`.
+
+Measured through the real loop on those rows (`scripts/ab_bucketing.py`,
+alternating arms so machine drift hits both, warmup pairs excluded):
+
+```
+rep 1: plain=69.2s bucketed=25.0s ratio=2.77x
+rep 2: plain=69.2s bucketed=25.0s ratio=2.77x
+```
+
+**2.77× at 1024/320.** Nothing about the loss or the shuffled membership changes;
+only how much padding each batch pays.
+
+Two cautions about measuring this. The first rep of each arm is warmup and reads
+far worse (40 s vs 25 s) — exclude it. And bare timings on this machine are
+unreliable: the same benchmark ran at 1,674 ms/step and later at 4,476 ms/step on
+identical code because `lowpowermode` was on and Spotlight was indexing. Only
+paired ratios, alternating arms, are trustworthy; record the power state with any
+number you quote.
 
 The shared causal rule that bucketing was going to enable is kept anyway, because
 it also applies to serving (one state per request, no padding) and costs nothing

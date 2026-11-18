@@ -68,6 +68,26 @@ scheduler.step()
 
 No dropout, no label smoothing beyond what the data already carries, no EMA.
 
+## Batching: rows, not examples
+
+A batch is capped by **rows**, because an example expands into one row per
+candidate and a test choice can carry thousands. `EncodedSet.batches(max_rows)`
+and `train._chunks` both enforce that cap.
+
+Within the cap, order decides how much padding is paid. A batch pads every row
+to its longest state and longest query, so a natural-order batch that happens to
+hold one 946-token example makes every 20-token example in it pay for 946 tokens.
+At 1024/320 on real fit-only rows, that came to **10.4×** the real state tokens.
+
+`EncodedSet.bucketed_order` groups examples into 16-token length bands and
+shuffles inside each band. Bands keep a batch's padded shape close to its own
+members; the shuffle keeps membership random, so no batch becomes
+label-homogeneous. That is measured at **2.77×** on the loop and documented with
+the numbers in [Experiments](11-experiments.md#bucketing-by-length-rejected-at-192-adopted-at-1024).
+
+Evaluation sorts by length unconditionally — it has no gradient and no order
+dependence — while `train(..., bucket=False)` restores the plain shuffle.
+
 ## Reproducibility
 
 ```python
@@ -125,9 +145,6 @@ These are deliberate, documented gaps rather than hidden bugs:
 
 - **No per-kind weighting.** `noul`, `choice`, and `score` are equal per group,
   but their example counts are not equal (~50/34/16% in the bekko corpus).
-- **No length bucketing.** Batches are shuffled globally, so a batch can mix a
-  20-token and a 190-token state and pad everything to 190. Bucketing would cut
-  wasted compute.
 - **No curriculum.** Instructions and criteria are sampled uniformly, not from
   easy to hard.
 - **Overfitting is not fought.** No early stopping, no dropout. Eval loss is

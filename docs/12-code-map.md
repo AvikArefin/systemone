@@ -38,6 +38,7 @@ Every file, what it does, and where to look when you want to change something.
 | [`measure_state_budget.py`](../scripts/measure_state_budget.py) | Score a checkpoint at several state/query budgets, whole split and on the rows the cap cut | 5 – 30 min |
 | [`measure_fit.py`](../scripts/measure_fit.py) | Report configs that overflow 1024/320 and drift from `UNFIT_CONFIGS` | seconds |
 | [`measure_attention_memory.py`](../scripts/measure_attention_memory.py) | Mask tensor size and attention time per mask strategy | seconds |
+| [`ab_bucketing.py`](../scripts/ab_bucketing.py) | Interleaved A/B of bucketed vs plain batching on real rows | minutes |
 | [`eval.py`](../scripts/eval.py) | Baseline-adjusted Task Avg on the test split | minutes |
 | [`build_tokenizers.py`](../scripts/build_tokenizers.py) | Rebuild and measure comparison tokenizers | minutes |
 | [`build_blocklist.py`](../scripts/build_blocklist.py) | Scan train for test duplicates and write the blocklist | one full pass over train |
