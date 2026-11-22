@@ -14,6 +14,7 @@ Four memory knobs, all measured in [Experiments](../docs/11-experiments.md):
 import math
 import os
 import random
+import time
 from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass, field
@@ -183,6 +184,7 @@ def train(
     resume: dict | None = None,
     on_epoch_end: Callable[[int, dict], None] | None = None,
     compile: bool = False,
+    progress: bool = False,
 ) -> History:
     """Train, optionally continuing a previous run.
 
@@ -276,6 +278,10 @@ def train(
         if not bucket:
             rng.shuffle(order)
         chunks = _shard_chunks(list(_chunks(dataset, order, max_rows)), rank, world_size)
+        epoch_steps = max(1, math.ceil(len(chunks) / grad_accum))
+        epoch_start = time.perf_counter()
+        last_pct = 0
+        epoch_step = 0
         for start in range(0, len(chunks), grad_accum):
             window = chunks[start : start + grad_accum]
             optimiser.zero_grad(set_to_none=True)
@@ -308,9 +314,23 @@ def train(
             scheduler.step()
             if ddp:
                 dist.all_reduce(running, op=dist.ReduceOp.AVG)
-            history.losses.append(running.item())
+            loss_val = running.item()
+            history.losses.append(loss_val)
             history.lrs.append(scheduler.get_last_lr()[0])
             step += 1
+            epoch_step += 1
+            if progress and rank == 0:
+                pct = (epoch_step * 100) // epoch_steps
+                if pct > last_pct:
+                    last_pct = pct
+                    elapsed = time.perf_counter() - epoch_start
+                    eta = elapsed * (epoch_steps - epoch_step) / epoch_step
+                    print(
+                        f"  epoch {epoch + 1}/{epochs} [{pct:3d}%] "
+                        f"step {epoch_step}/{epoch_steps} loss={loss_val:.4f} "
+                        f"elapsed={elapsed:.0f}s eta={eta:.0f}s",
+                        flush=True,
+                    )
         if eval_dataset is not None and (epoch + 1) % eval_every == 0:
             if rank == 0:
                 history.evals.append(

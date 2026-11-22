@@ -1,5 +1,9 @@
 import os
+import sys
 import time
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(line_buffering=True)
 
 import torch
 import torch.distributed as dist
@@ -68,6 +72,8 @@ def main() -> None:
     excluded = len(train_configs(include_unfit=True)) - len(configs)
     if CONFIG_LIMIT:
         configs = configs[:CONFIG_LIMIT]
+    if IS_MAIN:
+        print(f"loading train split ({len(configs)} configs, up to {MAX_CASES} cases/config)...", flush=True)
     train_grouped = load_train(
         configs=configs, max_candidates=MAX_CANDIDATES, max_cases=MAX_CASES, seed=SEED
     )
@@ -197,6 +203,7 @@ def main() -> None:
         resume=resume,
         on_epoch_end=save_state,
         compile=COMPILE,
+        progress=True,
     )
     if not IS_MAIN:
         return
