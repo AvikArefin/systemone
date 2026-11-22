@@ -22,7 +22,7 @@ from systemone.bpe import DEFAULT_VOCAB_SIZE, SentencePieceTokenizer
 from systemone.corpus import collect_texts, load_train, train_configs
 from systemone.data import filter_to_budget, load_or_build
 from systemone.paths import CHECKPOINT_DIR
-from systemone.train import train
+from systemone.train import default_device, train
 
 STATE = int(os.environ.get("SYSTEMONE_STATE_TOKENS", "1024"))
 QUERY = int(os.environ.get("SYSTEMONE_QUERY_TOKENS", "320"))
@@ -38,7 +38,7 @@ def main() -> None:
     args = parser.parse_args()
 
     set_seed(0)
-    device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+    device = default_device()
 
     grouped = load_train(configs=train_configs()[:CONFIGS], max_cases=CASES,
                          max_candidates=8, seed=0)

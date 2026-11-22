@@ -499,6 +499,30 @@ The shared causal rule that bucketing was going to enable is kept anyway, becaus
 it also applies to serving (one state per request, no padding) and costs nothing
 when there is padding to AND it with.
 
+### Vectorising `batch_loss` and removing GPU syncs
+
+The per-group Python loop in `batch_loss` called `.tolist()`, `.nonzero()`, and
+per-group `torch.tensor(..., device=...)` once per question (~100 syncs per
+batch), and `TinyJev.forward` checked `bool(state_mask.all())` on every call.
+Precomputing `noul_mask`, `row_targets`, `group_sizes`, and `state_unpadded` in
+`EncodedSet.collate` and computing the loss with a single `scatter_reduce_` +
+`scatter_add_` pass removes those syncs (and `collect_logits` /
+`probabilities_by_group` do one `.cpu()` + `torch.split` instead of per-group
+`.nonzero()`).
+
+Measured with alternating arms on Apple M4 MPS (deployed 4-layer `d_model=128`
+shape, `max_rows=256`, 6 batches, ~100 groups/batch, 192/64 budget, warmup
+excluded):
+
+```
+batch_loss fwd+bwd (6 batches)   703.9 ms ->    3.2 ms   (222.9x)
+full train step    (6 batches)  3342.8 ms -> 3001.6 ms   (1.11x)
+```
+
+On M4 MPS that is ~10% end-to-end; on CUDA GPUs (Colab/Kaggle T4, L4, A100),
+where the transformer forward/backward is much shorter and PCIe syncs are more
+expensive, removing the 117+ ms/step sync loop is what keeps the GPU fed.
+
 
 
 

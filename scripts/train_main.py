@@ -20,7 +20,7 @@ from systemone.corpus import (
     load_train,
     train_configs,
 )
-from systemone.train import train
+from systemone.train import autocast_dtype, default_device, train
 
 SEED = 0
 NAME = os.environ.get("SYSTEMONE_NAME", "bekko_tiny")
@@ -31,7 +31,9 @@ MAX_ROWS = int(os.environ.get("SYSTEMONE_MAX_ROWS", "256"))
 STATE_TOKENS = int(os.environ.get("SYSTEMONE_STATE_TOKENS", "192"))
 QUERY_TOKENS = int(os.environ.get("SYSTEMONE_QUERY_TOKENS", "64"))
 CHECKPOINT = os.environ.get("SYSTEMONE_CHECKPOINT", "0") == "1"
-BF16 = os.environ.get("SYSTEMONE_BF16", "0") == "1"
+device = default_device()
+BF16 = os.environ.get("SYSTEMONE_BF16", "1" if device.type == "cuda" else "0") == "1"
+COMPILE = os.environ.get("SYSTEMONE_COMPILE", "0") == "1"
 GRAD_ACCUM = int(os.environ.get("SYSTEMONE_GRAD_ACCUM", "1"))
 RESUME = os.environ.get("SYSTEMONE_RESUME", "0") == "1"
 FIT_ONLY = os.environ.get("SYSTEMONE_FIT_ONLY", "0") == "1"
@@ -51,7 +53,6 @@ else:
     MAX_CANDIDATES = 8
 
 set_seed(SEED)
-device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
 
 started = time.perf_counter()
 configs = train_configs(include_unfit=INCLUDE_UNFIT)
@@ -102,9 +103,10 @@ cfg = ModelConfig(
     max_query_tokens=QUERY_TOKENS,
 )
 model = build_model(cfg, SEED)
-print(f"params={cfg.parameter_count():,} ({cfg.parameter_count() / 1e6:.2f}M)")
+print(f"params={cfg.parameter_count():,} ({cfg.parameter_count() / 1e6:.2f}M) device={device}")
+amp_label = str(autocast_dtype(device)).split(".")[-1] if BF16 else "fp32"
 print(f"budget={STATE_TOKENS}/{QUERY_TOKENS} rows={MAX_ROWS} accum={GRAD_ACCUM} "
-      f"checkpoint={CHECKPOINT} bf16={BF16}")
+      f"checkpoint={CHECKPOINT} amp={amp_label} compile={COMPILE}")
 
 if FIT_ONLY:
     kept_train = filter_to_budget(train_set, tokenizer, cfg)
@@ -168,6 +170,7 @@ history = train(
     bf16=BF16,
     resume=resume,
     on_epoch_end=save_state,
+    compile=COMPILE,
 )
 print(f"train_s={time.perf_counter() - started:.1f}")
 print(f"steps={len(history.losses)}")

@@ -10,7 +10,7 @@ import os
 
 import torch
 
-from systemone import ModelConfig, checkpoint_path, load_checkpoint, set_seed
+from systemone import ModelConfig, checkpoint_path, default_device, load_checkpoint, set_seed
 from systemone.bpe import SentencePieceTokenizer
 from systemone.data import EncodedSet
 from systemone.corpus import load_test, test_configs
@@ -21,7 +21,7 @@ SEED = 0
 LIMIT = int(os.environ.get("SYSTEMONE_EVAL_CONFIGS", "0")) or None
 
 set_seed(SEED)
-device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+device = default_device()
 
 directory = checkpoint_path(NAME)
 model, tokenizer, temperatures = load_checkpoint(NAME)

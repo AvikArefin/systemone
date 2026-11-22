@@ -288,6 +288,59 @@ def test_group_loss_weights_every_question_equally(tokenizer, cfg):
     assert torch.isclose(batch_loss(logits, batch), expected)
 
 
+def test_vectorized_batch_loss_matches_reference_values_and_gradients(tokenizer, cfg):
+    """Vectorized batch_loss must match the per-group reference in value and grad."""
+    examples = [
+        Example(state="s1", question=Noul(instructions="q1"), label=True),
+        Example(state="s2", question=Noul(instructions="q2"), label=False, distribution=(0.3,)),
+        Example(
+            state="s3",
+            question=Choice(instructions="q3", criteria=["a", "b", "c"]),
+            label="b",
+        ),
+        Example(
+            state="s4",
+            question=Choice(instructions="q4", criteria=["x", "y", "z", "w"]),
+            label="x",
+            distribution=(0.5, 0.25, 0.15, 0.1),
+        ),
+        Example(
+            state="s5",
+            question=Score(instructions="q5", criteria=["low", "mid", "high"]),
+            label=2,
+        ),
+    ]
+    encoded = EncodedSet.build(examples, tokenizer, cfg)
+    batch = encoded.collate(list(range(len(examples))))
+    # Include all-negative logits to verify scatter_reduce amax handles negative maxima.
+    base = torch.tensor(
+        [-2.5, 1.3, -4.0, -1.5, -3.2, 0.7, -0.4, 2.1, -0.9, -5.0, -2.0, -3.5],
+        dtype=torch.float32,
+    )
+
+    logits_vec = base.clone().requires_grad_(True)
+    loss_vec = batch_loss(logits_vec, batch)
+    loss_vec.backward()
+
+    # Fallback path (no precomputed row tensors) serves as the per-group reference.
+    ref_batch = type(batch)(
+        state_ids=batch.state_ids,
+        state_mask=batch.state_mask,
+        query_ids=batch.query_ids,
+        query_mask=batch.query_mask,
+        group_ids=batch.group_ids,
+        targets=batch.targets,
+        kinds=batch.kinds,
+        distributions=batch.distributions,
+    )
+    logits_ref = base.clone().requires_grad_(True)
+    loss_ref = batch_loss(logits_ref, ref_batch)
+    loss_ref.backward()
+
+    assert torch.allclose(loss_vec, loss_ref, atol=1e-6)
+    assert torch.allclose(logits_vec.grad, logits_ref.grad, atol=1e-6)
+
+
 def test_cache_version_is_stamped(tokenizer, cfg):
     encoded = EncodedSet.build(_examples(), tokenizer, cfg)
     assert encoded.version == CACHE_VERSION

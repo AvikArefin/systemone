@@ -223,12 +223,21 @@ def probabilities_by_group(
         for chunk in dataset.batches(max_rows):
             batch = dataset.collate(chunk).to(device)
             logits = model(
-                batch.state_ids, batch.state_mask, batch.query_ids, batch.query_mask, batch.group_ids
+                batch.state_ids, batch.state_mask, batch.query_ids, batch.query_mask,
+                batch.group_ids, state_unpadded=batch.state_unpadded,
             )
-            for group in range(len(batch.kinds)):
+            logits_cpu = logits.float().cpu()
+            slices = (
+                torch.split(logits_cpu, batch.group_sizes)
+                if batch.group_sizes is not None
+                else [
+                    logits_cpu[(batch.group_ids.cpu() == group).nonzero(as_tuple=True)[0]]
+                    for group in range(len(batch.kinds))
+                ]
+            )
+            for group, group_logits in enumerate(slices):
                 kind = batch.kinds[group]
-                index = (batch.group_ids == group).nonzero(as_tuple=True)[0]
-                values = logits[index] / temperatures.get(kind, 1.0)
+                values = group_logits / temperatures.get(kind, 1.0)
                 if kind == "noul":
                     probability = torch.sigmoid(values[0]).item()
                     out[chunk[group]] = [1.0 - probability, probability]

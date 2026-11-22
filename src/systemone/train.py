@@ -65,10 +65,30 @@ def _chunks(dataset: EncodedSet, order: list[int], max_rows: int):
         yield batch
 
 
+def default_device() -> torch.device:
+    """Pick the fastest available accelerator: CUDA > MPS > CPU."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+def autocast_dtype(device: torch.device) -> torch.dtype:
+    """Best reduced-precision dtype for the device.
+
+    CUDA GPUs without native bf16 (e.g. Colab/Kaggle T4, P100) fall back to
+    fp16 so they hit Tensor Cores instead of slow bf16 emulation.
+    """
+    if device.type == "cuda" and not torch.cuda.is_bf16_supported():
+        return torch.float16
+    return torch.bfloat16
+
+
 def _precision(device: torch.device, bf16: bool):
     if not bf16:
         return nullcontext()
-    return torch.autocast(device.type, dtype=torch.bfloat16)
+    return torch.autocast(device.type, dtype=autocast_dtype(device))
 
 
 def evaluate(
@@ -92,6 +112,7 @@ def evaluate(
                     batch.query_ids,
                     batch.query_mask,
                     batch.group_ids,
+                    state_unpadded=batch.state_unpadded,
                 )
             total += batch_loss(logits, batch).item()
             count += 1
@@ -118,6 +139,7 @@ def train(
     bucket: bool = True,
     resume: dict | None = None,
     on_epoch_end: Callable[[int, dict], None] | None = None,
+    compile: bool = False,
 ) -> History:
     """Train, optionally continuing a previous run.
 
@@ -133,7 +155,12 @@ def train(
     receives a fresh one after each epoch, so the caller decides where it lives.
     """
     device = device or next(model.parameters()).device
+    if device.type == "cuda":
+        torch.set_float32_matmul_precision("high")
     model.to(device).train()
+    runner = torch.compile(model) if compile and device.type == "cuda" else model
+    use_scaler = device.type == "cuda" and bf16 and autocast_dtype(device) == torch.float16
+    scaler = torch.amp.GradScaler("cuda", enabled=use_scaler)
     optimiser = torch.optim.AdamW(
         model.parameters(), lr=lr, weight_decay=weight_decay
     )
@@ -199,25 +226,28 @@ def train(
         for start in range(0, len(chunks), grad_accum):
             window = chunks[start : start + grad_accum]
             optimiser.zero_grad(set_to_none=True)
-            running = 0.0
+            running = torch.zeros((), device=device)
             for chunk in window:
                 batch = dataset.collate(chunk).to(device)
                 with _precision(device, bf16):
-                    logits = model(
+                    logits = runner(
                         batch.state_ids,
                         batch.state_mask,
                         batch.query_ids,
                         batch.query_mask,
                         batch.group_ids,
                         checkpoint,
+                        batch.state_unpadded,
                     )
                     loss = batch_loss(logits, batch) / len(window)
-                loss.backward()
-                running += loss.item()
+                scaler.scale(loss).backward()
+                running = running + loss.detach()
+            scaler.unscale_(optimiser)
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-            optimiser.step()
+            scaler.step(optimiser)
+            scaler.update()
             scheduler.step()
-            history.losses.append(running)
+            history.losses.append(running.item())
             history.lrs.append(scheduler.get_last_lr()[0])
             step += 1
         if eval_dataset is not None and (epoch + 1) % eval_every == 0:

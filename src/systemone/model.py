@@ -138,6 +138,7 @@ class TinyJev(nn.Module):
         query_mask: Tensor,
         group_ids: Tensor | None = None,
         checkpoint: bool = False,
+        state_unpadded: bool | None = None,
     ) -> Tensor:
         """Score every row of a batch.
 
@@ -165,7 +166,7 @@ class TinyJev(nn.Module):
         # narrowed per row, so the mask stays [1, 1, q, total] and the state half
         # needs no mask at all.
         causal = _causal_rule(s_len, q_len, device)
-        unpadded = bool(state_mask.all())
+        unpadded = bool(state_mask.all()) if state_unpadded is None else state_unpadded
         state_attn_mask = None if unpadded else state_mask[:, None, None, :]
         query_attn_mask = (
             causal

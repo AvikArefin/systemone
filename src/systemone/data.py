@@ -90,17 +90,26 @@ class Batch:
     targets: list[float]
     kinds: list[str]
     distributions: list[tuple[float, ...] | None]
+    noul_mask: Tensor | None = None
+    row_targets: Tensor | None = None
+    group_sizes: list[int] | None = None
+    state_unpadded: bool | None = None
 
     def to(self, device: torch.device) -> "Batch":
+        nb = device.type == "cuda"
         return Batch(
-            self.state_ids.to(device),
-            self.state_mask.to(device),
-            self.query_ids.to(device),
-            self.query_mask.to(device),
-            self.group_ids.to(device),
+            self.state_ids.to(device, non_blocking=nb),
+            self.state_mask.to(device, non_blocking=nb),
+            self.query_ids.to(device, non_blocking=nb),
+            self.query_mask.to(device, non_blocking=nb),
+            self.group_ids.to(device, non_blocking=nb),
             self.targets,
             self.kinds,
             self.distributions,
+            self.noul_mask.to(device, non_blocking=nb) if self.noul_mask is not None else None,
+            self.row_targets.to(device, non_blocking=nb) if self.row_targets is not None else None,
+            self.group_sizes,
+            self.state_unpadded,
         )
 
 
@@ -360,20 +369,49 @@ class EncodedSet:
         state_mask = state_ids != self.pad_id
         query_ids = pad_sequence(queries, batch_first=True, padding_value=self.pad_id)
         query_mask = query_ids != self.pad_id
-        group_ids = torch.repeat_interleave(
-            torch.arange(len(states)), row_end - row_start
+        counts = row_end - row_start
+        group_ids = torch.repeat_interleave(torch.arange(len(states)), counts)
+        group_sizes = counts.tolist()
+
+        state_lens = state_end - state_start
+        state_unpadded = (
+            bool((state_lens.min() == state_lens.max()).item())
+            if len(states) > 0
+            else True
         )
 
         chosen = list(indices)
+        targets = self.targets[index].tolist()
+        kinds = [self.kinds[i] for i in chosen]
+        distributions = [self.distributions[i] for i in chosen]
+
+        total_rows = len(queries)
+        noul_mask = torch.zeros(total_rows, dtype=torch.bool)
+        row_targets = torch.zeros(total_rows, dtype=torch.float32)
+        offset = 0
+        for size, kind, target, dist in zip(group_sizes, kinds, targets, distributions):
+            if kind == "noul":
+                noul_mask[offset] = True
+                row_targets[offset] = dist[0] if dist is not None else target
+            elif dist is not None:
+                row_targets[offset : offset + size] = torch.tensor(dist, dtype=torch.float32)
+            else:
+                row_targets[offset + int(target)] = 1.0
+            offset += size
+
         return Batch(
             state_ids=state_ids,
             state_mask=state_mask,
             query_ids=query_ids,
             query_mask=query_mask,
             group_ids=group_ids,
-            targets=self.targets[index].tolist(),
-            kinds=[self.kinds[i] for i in chosen],
-            distributions=[self.distributions[i] for i in chosen],
+            targets=targets,
+            kinds=kinds,
+            distributions=distributions,
+            noul_mask=noul_mask,
+            row_targets=row_targets,
+            group_sizes=group_sizes,
+            state_unpadded=state_unpadded,
         )
 
 
@@ -420,6 +458,35 @@ def load_or_build(
 
 
 def batch_loss(logits: Tensor, batch: Batch) -> Tensor:
+    num_groups = len(batch.kinds)
+    if num_groups == 0:
+        return torch.zeros((), device=logits.device, dtype=torch.float32)
+
+    if batch.noul_mask is not None and batch.row_targets is not None:
+        z = logits.float()
+        group_ids = batch.group_ids
+        noul_mask = batch.noul_mask
+        row_targets = batch.row_targets
+        zero = torch.zeros_like(z)
+
+        # noul: BCE on the single logit for each noul group
+        bce = F.binary_cross_entropy_with_logits(z, row_targets, reduction="none")
+        noul_total = torch.where(noul_mask, bce, zero).sum()
+
+        # choice/score: numerically stable group-wise log-softmax via scatter
+        group_max = torch.zeros(num_groups, device=z.device, dtype=z.dtype).scatter_reduce_(
+            0, group_ids, z.detach(), reduce="amax", include_self=False
+        )
+        shifted = z - group_max[group_ids]
+        sum_exp = torch.zeros(num_groups, device=z.device, dtype=z.dtype).scatter_add_(
+            0, group_ids, shifted.exp()
+        )
+        log_probs = shifted - sum_exp.log()[group_ids]
+        softmax_total = torch.where(noul_mask, zero, -row_targets * log_probs).sum()
+
+        return (noul_total + softmax_total) / num_groups
+
+    # Fallback for manually constructed Batch objects without precomputed row tensors.
     total = torch.zeros((), device=logits.device)
     groups = sorted(set(batch.group_ids.tolist()))
     for group in groups:

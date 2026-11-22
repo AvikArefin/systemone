@@ -22,7 +22,7 @@ from systemone.calibrate import (
 from systemone.data import EncodedSet
 from systemone.model import TinyJev
 from systemone.seeding import build_model
-from systemone.train import evaluate, train
+from systemone.train import autocast_dtype, default_device, evaluate, train
 
 
 def _cfg(**overrides) -> ModelConfig:
@@ -160,6 +160,28 @@ def test_checkpointing_and_bf16_still_train(tokenizer):
         bf16=True,
     )
     assert history.losses[-1] < history.losses[0]
+
+
+def test_default_device_prefers_cuda_then_mps_then_cpu(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+    assert default_device() == torch.device("cuda")
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    assert default_device() == torch.device("mps")
+
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+    assert default_device() == torch.device("cpu")
+
+
+def test_autocast_dtype_uses_fp16_on_cuda_without_bf16(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: False)
+    assert autocast_dtype(torch.device("cuda")) == torch.float16
+    assert autocast_dtype(torch.device("mps")) == torch.bfloat16
+    assert autocast_dtype(torch.device("cpu")) == torch.bfloat16
+
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: True)
+    assert autocast_dtype(torch.device("cuda")) == torch.bfloat16
 
 
 def test_warmup_starts_below_the_peak_and_cosine_decays(tokenizer):

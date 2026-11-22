@@ -19,7 +19,7 @@ from dataclasses import replace
 
 import torch
 
-from systemone import checkpoint_path, load_checkpoint, set_seed
+from systemone import checkpoint_path, default_device, load_checkpoint, set_seed
 from systemone.data import EncodedSet
 from systemone.corpus import load_test, test_configs
 from systemone.scoring import Decision, build_report, probabilities_by_group
@@ -38,7 +38,7 @@ MAX_ROWS = int(os.environ.get("SYSTEMONE_STATE_ROWS", "256"))
 BASE = 192
 
 set_seed(0)
-device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+device = default_device()
 
 model, tokenizer, temperatures = load_checkpoint(NAME)
 print(f"checkpoint={NAME} params={model.cfg.parameter_count():,} device={device}")

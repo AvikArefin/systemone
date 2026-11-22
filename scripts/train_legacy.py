@@ -21,13 +21,13 @@ from systemone.calibrate import (
 )
 from systemone.hf import load_jevbench
 from systemone.schema import Choice, Score
-from systemone.train import evaluate, train
+from systemone.train import default_device, evaluate, train
 
 SEED = 0
 NAME = "jevbench_tiny"
 
 set_seed(SEED)
-device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+device = default_device()
 
 grouped = load_jevbench()
 train_set, test_set = split_by_case(grouped, test_fraction=0.2, seed=SEED)

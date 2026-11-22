@@ -7,6 +7,7 @@ from torch import Tensor
 
 from .data import EncodedSet
 from .model import TinyJev
+from .train import autocast_dtype
 
 KIND_ORDER = ("noul", "choice", "score")
 
@@ -22,7 +23,7 @@ def collect_logits(
     model.to(device).eval()
     collected: dict[str, list[tuple[Tensor, float]]] = {kind: [] for kind in KIND_ORDER}
     context = (
-        torch.autocast(device.type, dtype=torch.bfloat16)
+        torch.autocast(device.type, dtype=autocast_dtype(device))
         if bf16
         else contextlib.nullcontext()
     )
@@ -35,12 +36,22 @@ def collect_logits(
                 logits = model(
                     batch.state_ids, batch.state_mask, batch.query_ids,
                     batch.query_mask, batch.group_ids,
+                    state_unpadded=batch.state_unpadded,
                 )
-            for group in range(len(batch.kinds)):
-                index = (batch.group_ids == group).nonzero(as_tuple=True)[0]
-                collected[batch.kinds[group]].append(
-                    (logits[index].cpu(), batch.targets[group])
-                )
+            logits_cpu = logits.float().cpu()
+            if batch.group_sizes is not None:
+                slices = torch.split(logits_cpu, batch.group_sizes)
+                for group, group_logits in enumerate(slices):
+                    collected[batch.kinds[group]].append(
+                        (group_logits, batch.targets[group])
+                    )
+            else:
+                group_ids_cpu = batch.group_ids.cpu()
+                for group in range(len(batch.kinds)):
+                    index = (group_ids_cpu == group).nonzero(as_tuple=True)[0]
+                    collected[batch.kinds[group]].append(
+                        (logits_cpu[index], batch.targets[group])
+                    )
     return collected
 
 

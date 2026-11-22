@@ -21,7 +21,7 @@ from systemone.calibrate import (
     fit_temperatures,
 )
 from systemone.corpus import collect_texts, load_test, test_configs
-from systemone.train import evaluate, train
+from systemone.train import default_device, evaluate, train
 
 SEED = 0
 NAME = "test_tiny"
@@ -30,7 +30,7 @@ EPOCHS = int(os.environ.get("SYSTEMONE_EPOCHS", "10"))
 CONFIGS = test_configs()
 
 set_seed(SEED)
-device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+device = default_device()
 grouped = load_test(CONFIGS, seed=SEED)
 counts = {"noul": 0, "choice": 0, "score": 0}
 for case in grouped.values():

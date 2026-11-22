@@ -34,6 +34,24 @@ Three consequences worth understanding:
 3. **`noul` uses BCE on a single logit**, everything else uses softmax across the
    group's rows.
 
+In code, `EncodedSet.collate` precomputes `noul_mask`, `row_targets`, and
+`group_sizes` on CPU, and `batch_loss` computes the same quantity in a single
+vectorised `float32` pass (`scatter_reduce_` + `scatter_add_`) with no per-group
+Python loop or GPU→CPU synchronisation.
+
+## Accelerators (CUDA, MPS, CPU)
+
+`default_device()` selects `cuda` > `mps` > `cpu`. When reduced precision is
+enabled (`bf16=True`, which `scripts/train_main.py` turns on by default on CUDA):
+
+- **CUDA with native `bf16`** (L4, A100, H100) and **MPS / CPU** use `bfloat16`.
+- **CUDA without native `bf16`** (Colab/Kaggle T4, P100) automatically falls
+  back to `float16` with `GradScaler`, so it hits Tensor Cores instead of slow
+  emulated `bf16`.
+- On CUDA, `train()` also enables TF32 matmuls (`set_float32_matmul_precision("high")`),
+  uses non-blocking host-to-device copies, and supports `torch.compile` via
+  `compile=True` (`SYSTEMONE_COMPILE=1`).
+
 ## The optimiser and schedule
 
 ```python
