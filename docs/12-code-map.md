@@ -13,7 +13,7 @@ Every file, what it does, and where to look when you want to change something.
 | [`tokenizer.py`](../src/systemone/tokenizer.py) | Tokenizer protocol, byte tokenizer, truncation | `ByteTokenizer`, `truncate_head_tail`, `PAD_ID`, `SEP_ID` |
 | [`bpe.py`](../src/systemone/bpe.py) | SentencePiece training and wrapper | `train_tokenizer`, `SentencePieceTokenizer` |
 | [`prompt.py`](../src/systemone/prompt.py) | Turns a question + candidate into token IDs | `choice_query`, `noul_query`, `score_query` |
-| [`train.py`](../src/systemone/train.py) | Training loop, schedule, evaluation, device/AMP selection | `train`, `evaluate`, `History`, `default_device`, `autocast_dtype` |
+| [`train.py`](../src/systemone/train.py) | Training loop, schedule, evaluation, device/AMP/DDP | `train`, `evaluate`, `History`, `default_device`, `autocast_dtype`, `init_distributed` |
 | [`calibrate.py`](../src/systemone/calibrate.py) | Metrics, temperature fitting, ECE | `collect_logits`, `fit_temperatures`, `is_identifiable`, `expected_calibration_error` |
 | [`scoring.py`](../src/systemone/scoring.py) | Baseline-adjusted test scoring (Task Avg) | `build_report`, `probabilities_by_group`, `Decision` |
 | [`inference.py`](../src/systemone/inference.py) | One request in, typed answers out | `answer_request` |

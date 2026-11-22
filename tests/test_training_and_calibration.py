@@ -22,7 +22,7 @@ from systemone.calibrate import (
 from systemone.data import EncodedSet
 from systemone.model import TinyJev
 from systemone.seeding import build_model
-from systemone.train import autocast_dtype, default_device, evaluate, train
+from systemone.train import _shard_chunks, autocast_dtype, default_device, evaluate, init_distributed, train
 
 
 def _cfg(**overrides) -> ModelConfig:
@@ -182,6 +182,26 @@ def test_autocast_dtype_uses_fp16_on_cuda_without_bf16(monkeypatch):
 
     monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: True)
     assert autocast_dtype(torch.device("cuda")) == torch.bfloat16
+
+
+def test_shard_chunks_balances_ranks_without_deadlock():
+    chunks = [[0], [1], [2], [3], [4]]
+    r0 = _shard_chunks(chunks, rank=0, world_size=2)
+    r1 = _shard_chunks(chunks, rank=1, world_size=2)
+    assert len(r0) == len(r1) == 2
+    assert r0 == [[0], [2]] and r1 == [[1], [3]]
+
+    # Fewer chunks than ranks: pads so every rank still runs 1 step.
+    tiny = [[0]]
+    assert _shard_chunks(tiny, rank=0, world_size=2) == [[0]]
+    assert _shard_chunks(tiny, rank=1, world_size=2) == [[0]]
+
+
+def test_init_distributed_is_noop_without_world_size(monkeypatch):
+    monkeypatch.delenv("WORLD_SIZE", raising=False)
+    device, rank, world_size = init_distributed()
+    assert rank == 0 and world_size == 1
+    assert device == default_device()
 
 
 def test_warmup_starts_below_the_peak_and_cosine_decays(tokenizer):

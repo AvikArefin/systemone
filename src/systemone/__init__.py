@@ -10,7 +10,7 @@ from .schema import Choice, Noul, Request, Score
 from .scoring import build_report, probabilities_by_group
 from .seeding import build_model, set_seed
 from .tokenizer import ByteTokenizer
-from .train import default_device, train
+from .train import cleanup_distributed, default_device, init_distributed, train
 
 __all__ = [
     "ByteTokenizer",
@@ -28,8 +28,10 @@ __all__ = [
     "build_model",
     "build_report",
     "checkpoint_path",
+    "cleanup_distributed",
     "default_device",
     "fit_temperatures",
+    "init_distributed",
     "is_identifiable",
     "load_checkpoint",
     "load_jevbench",

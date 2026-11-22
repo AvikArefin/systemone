@@ -51,6 +51,11 @@ enabled (`bf16=True`, which `scripts/train_main.py` turns on by default on CUDA)
 - On CUDA, `train()` also enables TF32 matmuls (`set_float32_matmul_precision("high")`),
   uses non-blocking host-to-device copies, and supports `torch.compile` via
   `compile=True` (`SYSTEMONE_COMPILE=1`).
+- **Multi-GPU (DDP):** launch with `torchrun --standalone --nproc_per_node=2 scripts/train_main.py`
+  (e.g. Kaggle 2× T4). `init_distributed()` wires up NCCL/DDP automatically,
+  shards chunks evenly across ranks (`no_sync()` inside `grad_accum` windows),
+  and restricts tokenizer/cache writes, evaluation, and checkpoint saves to
+  rank 0. On single-GPU or Mac runs (`WORLD_SIZE` unset) DDP is a no-op.
 
 ## The optimiser and schedule
 

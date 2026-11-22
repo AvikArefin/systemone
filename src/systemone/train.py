@@ -12,12 +12,15 @@ Four memory knobs, all measured in [Experiments](../docs/11-experiments.md):
 """
 
 import math
+import os
 import random
 from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 
 import torch
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 from .data import EncodedSet, batch_loss
 from .model import TinyJev
@@ -72,6 +75,46 @@ def default_device() -> torch.device:
     if torch.backends.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")
+
+
+def init_distributed() -> tuple[torch.device, int, int]:
+    """Initialise DDP when launched under `torchrun`, otherwise return single-device.
+
+    Returns `(device, rank, world_size)`. On Mac (MPS/CPU) or single-GPU runs
+    where `WORLD_SIZE` is unset or 1, this is a no-op and returns
+    `(default_device(), 0, 1)`.
+    """
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    if world_size <= 1:
+        return default_device(), 0, 1
+    rank = int(os.environ["RANK"])
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
+        device = torch.device("cuda", local_rank)
+        backend = "nccl"
+    else:
+        device = torch.device("cpu")
+        backend = "gloo"
+    if not dist.is_initialized():
+        dist.init_process_group(backend=backend)
+    return device, rank, world_size
+
+
+def cleanup_distributed() -> None:
+    if dist.is_available() and dist.is_initialized():
+        dist.destroy_process_group()
+
+
+def _shard_chunks(chunks: list[list[int]], rank: int, world_size: int) -> list[list[int]]:
+    """Split chunks evenly across DDP ranks so every rank runs the same step count."""
+    if world_size <= 1 or not chunks:
+        return chunks
+    if len(chunks) < world_size:
+        padded = [chunks[i % len(chunks)] for i in range(world_size)]
+        return [padded[rank]]
+    usable = len(chunks) - (len(chunks) % world_size)
+    return chunks[rank:usable:world_size]
 
 
 def autocast_dtype(device: torch.device) -> torch.dtype:
@@ -157,8 +200,17 @@ def train(
     device = device or next(model.parameters()).device
     if device.type == "cuda":
         torch.set_float32_matmul_precision("high")
+    ddp = dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1
+    rank = dist.get_rank() if ddp else 0
+    world_size = dist.get_world_size() if ddp else 1
+
     model.to(device).train()
-    runner = torch.compile(model) if compile and device.type == "cuda" else model
+    ddp_model = (
+        DDP(model, device_ids=[device.index] if device.type == "cuda" else None)
+        if ddp
+        else model
+    )
+    runner = torch.compile(ddp_model) if compile and device.type == "cuda" else ddp_model
     use_scaler = device.type == "cuda" and bf16 and autocast_dtype(device) == torch.float16
     scaler = torch.amp.GradScaler("cuda", enabled=use_scaler)
     optimiser = torch.optim.AdamW(
@@ -172,7 +224,8 @@ def train(
         if bucket
         else list(range(len(dataset)))
     )
-    chunks_per_epoch = len(list(_chunks(dataset, counted, max_rows)))
+    counted_chunks = _shard_chunks(list(_chunks(dataset, counted, max_rows)), rank, world_size)
+    chunks_per_epoch = len(counted_chunks)
     steps_per_epoch = math.ceil(chunks_per_epoch / grad_accum)
     total_steps = max(1, steps_per_epoch * epochs)
     warmup_steps = int(total_steps * warmup_fraction)
@@ -222,48 +275,62 @@ def train(
         )
         if not bucket:
             rng.shuffle(order)
-        chunks = list(_chunks(dataset, order, max_rows))
+        chunks = _shard_chunks(list(_chunks(dataset, order, max_rows)), rank, world_size)
         for start in range(0, len(chunks), grad_accum):
             window = chunks[start : start + grad_accum]
             optimiser.zero_grad(set_to_none=True)
             running = torch.zeros((), device=device)
-            for chunk in window:
+            for idx, chunk in enumerate(window):
                 batch = dataset.collate(chunk).to(device)
-                with _precision(device, bf16):
-                    logits = runner(
-                        batch.state_ids,
-                        batch.state_mask,
-                        batch.query_ids,
-                        batch.query_mask,
-                        batch.group_ids,
-                        checkpoint,
-                        batch.state_unpadded,
-                    )
-                    loss = batch_loss(logits, batch) / len(window)
-                scaler.scale(loss).backward()
+                sync_ctx = (
+                    ddp_model.no_sync()
+                    if ddp and idx < len(window) - 1
+                    else nullcontext()
+                )
+                with sync_ctx:
+                    with _precision(device, bf16):
+                        logits = runner(
+                            batch.state_ids,
+                            batch.state_mask,
+                            batch.query_ids,
+                            batch.query_mask,
+                            batch.group_ids,
+                            checkpoint,
+                            batch.state_unpadded,
+                        )
+                        loss = batch_loss(logits, batch) / len(window)
+                    scaler.scale(loss).backward()
                 running = running + loss.detach()
             scaler.unscale_(optimiser)
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             scaler.step(optimiser)
             scaler.update()
             scheduler.step()
+            if ddp:
+                dist.all_reduce(running, op=dist.ReduceOp.AVG)
             history.losses.append(running.item())
             history.lrs.append(scheduler.get_last_lr()[0])
             step += 1
         if eval_dataset is not None and (epoch + 1) % eval_every == 0:
-            history.evals.append(
-                (epoch + 1, evaluate(model, eval_dataset, max_rows, device, bf16))
-            )
+            if rank == 0:
+                history.evals.append(
+                    (epoch + 1, evaluate(model, eval_dataset, max_rows, device, bf16))
+                )
+            if ddp:
+                dist.barrier()
             model.to(device).train()
         history.epoch = epoch + 1
         if on_epoch_end is not None:
-            on_epoch_end(
-                epoch + 1,
-                history.state(
-                    model, optimiser, scheduler,
-                    fingerprint=getattr(dataset, "fingerprint", ""),
-                ),
-            )
+            if rank == 0:
+                on_epoch_end(
+                    epoch + 1,
+                    history.state(
+                        model, optimiser, scheduler,
+                        fingerprint=getattr(dataset, "fingerprint", ""),
+                    ),
+                )
+            if ddp:
+                dist.barrier()
 
     model.eval()
     return history
