@@ -254,7 +254,9 @@ class EncodedSet:
         for index in range(len(lengths)):
             bands.setdefault(lengths[index] // bucket_tokens, []).append(index)
         order: list[int] = []
-        for band in sorted(bands):
+        band_keys = sorted(bands)
+        rng.shuffle(band_keys)
+        for band in band_keys:
             members = bands[band]
             rng.shuffle(members)
             order.extend(members)

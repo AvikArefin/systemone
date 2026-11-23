@@ -28,16 +28,6 @@ model, tokenizer, temperatures = load_checkpoint(NAME)
 print(f"checkpoint={NAME} params={model.cfg.parameter_count():,} device={device}")
 print(f"temperatures={ {k: round(v, 3) for k, v in temperatures.items()} }")
 
-configs = test_configs()
-if LIMIT is not None:
-    configs = configs[:LIMIT]
-
-grouped = load_test(
-    configs, max_candidates=None, seed=SEED, shuffle_options=False, strict=True
-)
-examples = [example for case in grouped.values() for example in case]
-print(f"configs={len(configs)} cases={len(grouped)} examples={len(examples)}")
-
 cfg = ModelConfig(
     vocab_size=tokenizer.vocab_size,
     d_model=model.cfg.d_model,
@@ -49,33 +39,53 @@ cfg = ModelConfig(
     max_query_tokens=model.cfg.max_query_tokens,
 )
 cache = directory / "eval_cache.pt"
-dataset = EncodedSet.build(examples, tokenizer, cfg)
-dataset.save(cache)
-print(f"rows={len(dataset.query_offsets) - 1} cache={cache.name}")
+dataset = None
+if LIMIT is None and cache.exists():
+    cached = EncodedSet.load(cache)
+    if (
+        cached.compatible(tokenizer, cfg)
+        and cached.benchmarks is not None
+        and cached.candidate_ids is not None
+        and cached.values is not None
+    ):
+        dataset = cached
+        print(
+            f"cache hit examples={len(dataset)} rows={len(dataset.query_offsets) - 1} "
+            f"cache={cache.name} (skipped HuggingFace)"
+        )
+
+if dataset is None:
+    configs = test_configs()
+    if LIMIT is not None:
+        configs = configs[:LIMIT]
+
+    grouped = load_test(
+        configs, max_candidates=None, seed=SEED, shuffle_options=False, strict=True
+    )
+    examples = [example for case in grouped.values() for example in case]
+    print(f"configs={len(configs)} cases={len(grouped)} examples={len(examples)}")
+
+    dataset = EncodedSet.build(examples, tokenizer, cfg)
+    if LIMIT is None:
+        dataset.save(cache)
+    print(f"rows={len(dataset.query_offsets) - 1} cache={cache.name}")
 
 probabilities = probabilities_by_group(
     model, dataset, device=device, temperatures=temperatures
 )
 
-decisions = []
-for index, example in enumerate(examples):
-    kind = example.question.__class__.__name__.lower()
-    question = example.question
-    if kind == "choice":
-        label = float(question.criteria.index(example.label))
-    else:
-        label = float(example.label)
-    decisions.append(
-        Decision(
-            benchmark=example.benchmark or "unknown",
-            kind=kind,
-            probabilities=probabilities[index],
-            distribution=example.distribution,
-            label=label,
-            candidate_ids=example.candidate_ids,
-            values=example.values,
-        )
+decisions = [
+    Decision(
+        benchmark=dataset.benchmarks[index] or "unknown",
+        kind=dataset.kinds[index],
+        probabilities=probabilities[index],
+        distribution=dataset.distributions[index],
+        label=float(dataset.targets[index].item()),
+        candidate_ids=dataset.candidate_ids[index],
+        values=dataset.values[index],
     )
+    for index in range(len(dataset))
+]
 
 report = build_report(decisions)
 
