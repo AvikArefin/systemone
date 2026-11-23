@@ -6,7 +6,8 @@ Run everything in **one Kaggle notebook** with **Persistence → Files only**:
    `/kaggle/working/artifacts/bekko_1024/`.
 2. Switch the same notebook's accelerator to **GPU T4 x2** — persistence keeps
    `/kaggle/working/artifacts/bekko_1024/` intact across the restart.
-3. Run Setup + Train — instant cache hit (~1–2s), zero HuggingFace downloads.
+3. Run Cell 1 (Setup) + Cell 3 (Train) or Cell 4 (Resume) — every cell below is
+   self-contained so you can run it straight after Cell 1 on a fresh restart.
 
 ---
 
@@ -58,7 +59,7 @@ Once this finishes, switch **Accelerator → GPU T4 x2** and re-run **Cell 1**.
 
 ---
 
-## Cell 3 — Train (Accelerator: GPU T4 x2)
+## Cell 3 — Train from scratch (Accelerator: GPU T4 x2)
 
 ```python
 os.environ["PYTHONUNBUFFERED"] = "1"
@@ -66,30 +67,45 @@ os.environ["SYSTEMONE_CHECKPOINT_DIR"] = "/kaggle/working/artifacts"
 os.environ["SYSTEMONE_NAME"] = "bekko_1024"
 os.environ["SYSTEMONE_STATE_TOKENS"] = "1024"
 os.environ["SYSTEMONE_QUERY_TOKENS"] = "320"
-os.environ["SYSTEMONE_CHECKPOINT"] = "1"
-os.environ["SYSTEMONE_MAX_ROWS"] = "64"
-os.environ["SYSTEMONE_GRAD_ACCUM"] = "4"
-os.environ["SYSTEMONE_COMPILE"] = "1"
 os.environ["BEKKO_CASES"] = "1000"
-os.environ["SYSTEMONE_EPOCHS"] = "2"
+os.environ["SYSTEMONE_CHECKPOINT"] = "1"
+os.environ["SYSTEMONE_MAX_ROWS"] = "128"
+os.environ["SYSTEMONE_GRAD_ACCUM"] = "2"
+os.environ["SYSTEMONE_COMPILE"] = "0"
+os.environ["SYSTEMONE_RESUME"] = "0"
+os.environ["SYSTEMONE_EPOCHS"] = "10"
 
 !uv run torchrun --standalone --nproc_per_node=2 scripts/train_main.py
 ```
 
-Look for `cache hit in ... (skipped HuggingFace)` at startup. Outputs are
-written to `/kaggle/working/artifacts/bekko_1024/model.pt` and
+Look for `cache hit in ... vocab=3072 ... (skipped HuggingFace)` at startup.
+Outputs are written to `/kaggle/working/artifacts/bekko_1024/model.pt` and
 `training_state.pt`.
 
 ---
 
-## Cell 4 — Resume for more epochs (optional)
+## Cell 4 — Resume for more epochs (self-contained after restart)
 
 ```python
+os.environ["PYTHONUNBUFFERED"] = "1"
+os.environ["SYSTEMONE_CHECKPOINT_DIR"] = "/kaggle/working/artifacts"
+os.environ["SYSTEMONE_NAME"] = "bekko_1024"
+os.environ["SYSTEMONE_STATE_TOKENS"] = "1024"
+os.environ["SYSTEMONE_QUERY_TOKENS"] = "320"
+os.environ["BEKKO_CASES"] = "1000"
+os.environ["SYSTEMONE_CHECKPOINT"] = "1"
+os.environ["SYSTEMONE_MAX_ROWS"] = "128"
+os.environ["SYSTEMONE_GRAD_ACCUM"] = "2"
+os.environ["SYSTEMONE_COMPILE"] = "0"
 os.environ["SYSTEMONE_RESUME"] = "1"
-os.environ["SYSTEMONE_EPOCHS"] = "6"
+os.environ["SYSTEMONE_EPOCHS"] = "20"
 
 !uv run torchrun --standalone --nproc_per_node=2 scripts/train_main.py
 ```
+
+Look for both `cache hit in ...` and `resuming from epoch N (target 20)` at
+startup. `SYSTEMONE_EPOCHS` is the **total** target epoch count, not additional
+epochs.
 
 ---
 
@@ -102,6 +118,9 @@ os.environ["SYSTEMONE_EVAL_CHECKPOINT"] = "bekko_1024"
 !uv run python scripts/eval.py
 ```
 
+Writes `/kaggle/working/artifacts/bekko_1024/test_report.json` and reuses
+`eval_cache.pt` automatically after the first evaluation.
+
 ---
 
 ## Options and tuning
@@ -109,9 +128,8 @@ os.environ["SYSTEMONE_EVAL_CHECKPOINT"] = "bekko_1024"
 | Option | When to use it |
 |---|---|
 | `HF_TOKEN` | Load a free read-only token from **Add-ons → Secrets** (`UserSecretsClient().get_secret("HF_TOKEN")`) before Cell 2 to avoid anonymous HuggingFace rate limits. |
-| `SYSTEMONE_MAX_ROWS=32` + `SYSTEMONE_GRAD_ACCUM=8` | If 15 GB T4 hits OOM on the longest `1024/320` batches (keeps 512 effective rows/step). |
-| `SYSTEMONE_MAX_ROWS=128` + `SYSTEMONE_GRAD_ACCUM=2` | If T4 has plenty of free VRAM and you want higher throughput. |
-| `SYSTEMONE_COMPILE=0` | If `torch.compile` + gradient checkpointing triggers slow recompiles on T4. |
+| `SYSTEMONE_MAX_ROWS=64` + `SYSTEMONE_GRAD_ACCUM=4` | If 15 GB T4 hits OOM on the longest `1024/320` batches (keeps 512 effective rows/step). |
+| `SYSTEMONE_COMPILE=1` | Optional speedup, but off by default on T4 because variable-length bands can trigger slow Triton recompilations and DDP stalls. |
 | `SYSTEMONE_DEV=1` | Fast pipeline sanity check (5 configs, 200 cases/config, saves to `<name>_dev`). |
 | `SYSTEMONE_FIT_ONLY=1` | Diagnostic only: strictly drops every row (in both train and test) exceeding the budget by ≥1 token. Leave unset for normal runs (`UNFIT_CONFIGS` is already excluded by default). |
 
@@ -130,5 +148,5 @@ os.environ["SYSTEMONE_EVAL_CHECKPOINT"] = "bekko_1024"
   Version** and eats the 20 GB output quota).
 - **Cache mismatch:** `EncodedSet.compatible()` checks budget and tokenizer
   fingerprint; if `SYSTEMONE_STATE_TOKENS`, `SYSTEMONE_QUERY_TOKENS`, or
-  `SYSTEMONE_FIT_ONLY` differ between Cell 2 and Cell 3, it will fall back to
-  downloading from HuggingFace.
+  `SYSTEMONE_FIT_ONLY` differ between Cell 2 and Cells 3–4, it will fall back
+  to downloading from HuggingFace.
