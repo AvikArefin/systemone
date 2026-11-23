@@ -29,6 +29,7 @@ decision data rather than general web text.
 | 12 | [Code map](12-code-map.md) | Which file does what |
 | 13 | [Deployment](13-deployment.md) | Why 1M parameters, and what fits on a chip |
 | 14 | [Data browser](14-data-browser.md) | How do I look at the data by hand? |
+| 15 | [Kaggle training](15-kaggle.md) | How do I cache the dataset and train on Kaggle 2× T4? |
 
 ## Status: retrained, first comparable number
 

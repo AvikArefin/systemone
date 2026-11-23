@@ -360,6 +360,59 @@ def train_configs(repo: str = BEKKO_REPO, *, include_unfit: bool = False) -> lis
     return [config for config in configs if config not in UNFIT_CONFIGS]
 
 
+def _download_parquet_snapshot(
+    repo: str, configs: list[str], split: str
+) -> Path | None:
+    """Download all requested config/split parquet files in one parallel batch.
+
+    Calling `datasets.load_dataset` in a loop across ~200 configs issues
+    sequential Hub API round-trips and runs Arrow conversion per config.
+    `snapshot_download` lists the repo once and pulls all matching parquet
+    files concurrently (using HF Xet when available). Returns `None` if
+    unavailable so callers fall back to `datasets.load_dataset`.
+    """
+    if "/" not in repo or not configs:
+        return None
+    try:
+        from huggingface_hub import snapshot_download
+    except Exception:
+        return None
+    patterns = [f"data/{config}/{split}*.parquet" for config in configs]
+    try:
+        return Path(
+            snapshot_download(
+                repo_id=repo,
+                repo_type="dataset",
+                allow_patterns=patterns,
+                max_workers=16,
+            )
+        )
+    except Exception:
+        return None
+
+
+def _iter_parquet_rows(files: list[Path], max_cases: int | None):
+    """Stream rows from parquet shards, reading only needed columns and stopping early."""
+    import pyarrow.parquet as pq
+
+    columns = ["case_id", "input", "targets"]
+    seen = 0
+    for path in files:
+        pf = pq.ParquetFile(path)
+        for rg in range(pf.num_row_groups):
+            rows = pf.read_row_group(rg, columns=columns).to_pylist()
+            if max_cases is not None:
+                remaining = max_cases - seen
+                if remaining <= 0:
+                    return
+                if len(rows) > remaining:
+                    rows = rows[:remaining]
+            yield from rows
+            seen += len(rows)
+            if max_cases is not None and seen >= max_cases:
+                return
+
+
 def load_typed_decisions(
     repo: str,
     configs: list[str],
@@ -373,16 +426,25 @@ def load_typed_decisions(
 ) -> dict[str, list[Example]]:
     from datasets import load_dataset
 
+    snapshot = _download_parquet_snapshot(repo, configs, split)
     rng = random.Random(seed)
     grouped: dict[str, list[Example]] = {}
     dropped: dict[str, int] = {}
     skipped: dict[str, int] = {}
     for config in configs:
-        try:
-            dataset = load_dataset(repo, config, split=split)
-        except Exception as error:
-            print(f"skip config {config}: {type(error).__name__}")
-            continue
+        parquet_files = (
+            sorted((snapshot / "data" / config).glob(f"{split}*.parquet"))
+            if snapshot is not None
+            else []
+        )
+        if parquet_files:
+            dataset = _iter_parquet_rows(parquet_files, max_cases)
+        else:
+            try:
+                dataset = load_dataset(repo, config, split=split)
+            except Exception as error:
+                print(f"skip config {config}: {type(error).__name__}")
+                continue
         blocked = (exclude or {}).get(config, set())
         for case, row in enumerate(dataset):
             if max_cases is not None and case >= max_cases:

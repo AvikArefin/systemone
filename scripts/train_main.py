@@ -45,6 +45,7 @@ RESUME = os.environ.get("SYSTEMONE_RESUME", "0") == "1"
 FIT_ONLY = os.environ.get("SYSTEMONE_FIT_ONLY", "0") == "1"
 DEV = os.environ.get("SYSTEMONE_DEV", "0") == "1"
 INCLUDE_UNFIT = os.environ.get("SYSTEMONE_INCLUDE_UNFIT", "0") == "1"
+CACHE_ONLY = os.environ.get("SYSTEMONE_CACHE_ONLY", "0") == "1"
 
 if DEV:
     # Fast loop: fewer configs, fewer candidates per case, and a smaller data cap.
@@ -72,6 +73,7 @@ def main() -> None:
     suffix = "_fit" if FIT_ONLY else ""
     train_cache_file = directory / f"bekko_train_cache{suffix}.pt"
     test_cache_file = directory / f"test_cache{suffix}.pt"
+    probe_cache_file = directory / "probe_cache.pt"
 
     # Only rank 0 touches HuggingFace, trains the tokenizer, and builds caches.
     # Worker ranks wait at the barrier and load the cached tensors in ~5 ms,
@@ -80,86 +82,130 @@ def main() -> None:
     probe_data = None
     if IS_MAIN:
         started = time.perf_counter()
-        configs = train_configs(include_unfit=INCLUDE_UNFIT)
-        excluded = len(train_configs(include_unfit=True)) - len(configs)
-        if CONFIG_LIMIT:
-            configs = configs[:CONFIG_LIMIT]
-        print(f"loading train split ({len(configs)} configs, up to {MAX_CASES} cases/config)...", flush=True)
-        train_grouped = load_train(
-            configs=configs, max_candidates=MAX_CANDIDATES, max_cases=MAX_CASES, seed=SEED
-        )
-        train_set = [example for case in train_grouped.values() for example in case]
-        print(f"train load_s={time.perf_counter() - started:.1f} configs={len(configs)} "
-              f"excluded_unfit={excluded} cases={len(train_grouped)} examples={len(train_set)}")
-
-        test_grouped = load_test(seed=SEED)
-        test_set = [example for case in test_grouped.values() for example in case]
-
-        counts = {"noul": 0, "choice": 0, "score": 0}
-        for example in train_set:
-            counts[type(example.question).__name__.lower()] += 1
-        print(f"train kinds={counts}")
-        print(f"test examples={len(test_set)}")
-
-        if tokenizer_file.exists():
+        cache_hit = False
+        if tokenizer_file.exists() and train_cache_file.exists() and test_cache_file.exists():
             tokenizer = SentencePieceTokenizer(tokenizer_file)
-            if tokenizer.vocab_size != DEFAULT_VOCAB_SIZE:
-                print(
-                    f"warning: reusing a {tokenizer.vocab_size}-piece tokenizer; a new "
-                    f"vocabulary is {DEFAULT_VOCAB_SIZE} pieces. Delete {tokenizer_file} "
-                    f"or use a new checkpoint name to rebuild it."
-                )
-            print(f"tokenizer reused vocab={tokenizer.vocab_size}")
-        else:
-            tokenizer = train_tokenizer(collect_texts(train_grouped), directory / "tokenizer", vocab_size=DEFAULT_VOCAB_SIZE)
-            print(f"tokenizer vocab={tokenizer.vocab_size}")
+            cfg = ModelConfig(
+                vocab_size=tokenizer.vocab_size,
+                d_model=128,
+                n_layers=4,
+                n_heads=4,
+                n_kv_heads=2,
+                ffn_hidden=352,
+                max_state_tokens=STATE_TOKENS,
+                max_query_tokens=QUERY_TOKENS,
+            )
+            cached_train = EncodedSet.load(train_cache_file)
+            cached_test = EncodedSet.load(test_cache_file)
+            if cached_train.compatible(tokenizer, cfg) and cached_test.compatible(tokenizer, cfg):
+                if len(cached_train) >= len(cached_test):
+                    cached_probe = cached_test
+                elif probe_cache_file.exists():
+                    candidate_probe = EncodedSet.load(probe_cache_file)
+                    cached_probe = (
+                        candidate_probe
+                        if candidate_probe.compatible(tokenizer, cfg)
+                        else None
+                    )
+                else:
+                    cached_probe = None
+                if cached_probe is not None:
+                    train_data = cached_train
+                    test_data = cached_test
+                    probe_data = cached_probe
+                    cache_hit = True
+                    print(
+                        f"cache hit in {time.perf_counter() - started:.2f}s "
+                        f"vocab={tokenizer.vocab_size} train={len(train_data)} "
+                        f"test={len(test_data)} probe={len(probe_data)} (skipped HuggingFace)",
+                        flush=True,
+                    )
 
-        cfg = ModelConfig(
-            vocab_size=tokenizer.vocab_size,
-            d_model=128,
-            n_layers=4,
-            n_heads=4,
-            n_kv_heads=2,
-            ffn_hidden=352,
-            max_state_tokens=STATE_TOKENS,
-            max_query_tokens=QUERY_TOKENS,
-        )
-        if FIT_ONLY:
-            kept_train = filter_to_budget(train_set, tokenizer, cfg)
-            kept_test = filter_to_budget(test_set, tokenizer, cfg)
-            print(f"fit-only {len(kept_train)}/{len(train_set)} train examples "
-                  f"({100*len(kept_train)/len(train_set):.1f}%), "
-                  f"{len(kept_test)}/{len(test_set)} test ({100*len(kept_test)/len(test_set):.1f}%)")
-            train_set, test_set = kept_train, kept_test
+        if not cache_hit:
+            configs = train_configs(include_unfit=INCLUDE_UNFIT)
+            excluded = len(train_configs(include_unfit=True)) - len(configs)
+            if CONFIG_LIMIT:
+                configs = configs[:CONFIG_LIMIT]
+            print(f"loading train split ({len(configs)} configs, up to {MAX_CASES} cases/config)...", flush=True)
+            train_grouped = load_train(
+                configs=configs, max_candidates=MAX_CANDIDATES, max_cases=MAX_CASES, seed=SEED
+            )
+            train_set = [example for case in train_grouped.values() for example in case]
+            print(f"train load_s={time.perf_counter() - started:.1f} configs={len(configs)} "
+                  f"excluded_unfit={excluded} cases={len(train_grouped)} examples={len(train_set)}")
 
-        train_data = load_or_build(train_cache_file, train_set, tokenizer, cfg)
-        test_data = load_or_build(test_cache_file, test_set, tokenizer, cfg)
-        print(
-            f"cache train={len(train_data)} test={len(test_data)} "
-            f"state_tokens={train_data.state_data.numel():,} "
-            f"query_tokens={train_data.query_data.numel():,}"
-        )
+            test_grouped = load_test(seed=SEED)
+            test_set = [example for case in test_grouped.values() for example in case]
 
-        # Evaluation is sized to the training set, never larger: measuring on 5x the data
-        # the model sees is not more honest, it is just slower. The probe is what we
-        # monitor each epoch and is capped at the training size; the whole held-out split
-        # is scored exactly once, at the end.
-        probe_size = min(len(test_data), len(train_data))
-        if probe_size >= len(test_data):
-            probe_data = test_data
-        else:
-            # Spread the probe across configs instead of taking the first N, which would
-            # be the first few configs only.
-            per_config = max(1, probe_size // max(1, len(test_grouped)))
-            probe_examples = [
-                example
-                for case in test_grouped.values()
-                for example in case[:per_config]
-            ][:probe_size]
-            probe_data = load_or_build(directory / "probe_cache.pt", probe_examples, tokenizer, cfg)
-        print(f"eval probe={len(probe_data)} (test {len(test_data)}, train {len(train_data)})")
+            counts = {"noul": 0, "choice": 0, "score": 0}
+            for example in train_set:
+                counts[type(example.question).__name__.lower()] += 1
+            print(f"train kinds={counts}")
+            print(f"test examples={len(test_set)}")
+
+            if tokenizer_file.exists():
+                tokenizer = SentencePieceTokenizer(tokenizer_file)
+                if tokenizer.vocab_size != DEFAULT_VOCAB_SIZE:
+                    print(
+                        f"warning: reusing a {tokenizer.vocab_size}-piece tokenizer; a new "
+                        f"vocabulary is {DEFAULT_VOCAB_SIZE} pieces. Delete {tokenizer_file} "
+                        f"or use a new checkpoint name to rebuild it."
+                    )
+                print(f"tokenizer reused vocab={tokenizer.vocab_size}")
+            else:
+                tokenizer = train_tokenizer(collect_texts(train_grouped), directory / "tokenizer", vocab_size=DEFAULT_VOCAB_SIZE)
+                print(f"tokenizer vocab={tokenizer.vocab_size}")
+
+            cfg = ModelConfig(
+                vocab_size=tokenizer.vocab_size,
+                d_model=128,
+                n_layers=4,
+                n_heads=4,
+                n_kv_heads=2,
+                ffn_hidden=352,
+                max_state_tokens=STATE_TOKENS,
+                max_query_tokens=QUERY_TOKENS,
+            )
+            if FIT_ONLY:
+                kept_train = filter_to_budget(train_set, tokenizer, cfg)
+                kept_test = filter_to_budget(test_set, tokenizer, cfg)
+                print(f"fit-only {len(kept_train)}/{len(train_set)} train examples "
+                      f"({100*len(kept_train)/len(train_set):.1f}%), "
+                      f"{len(kept_test)}/{len(test_set)} test ({100*len(kept_test)/len(test_set):.1f}%)")
+                train_set, test_set = kept_train, kept_test
+
+            train_data = load_or_build(train_cache_file, train_set, tokenizer, cfg)
+            test_data = load_or_build(test_cache_file, test_set, tokenizer, cfg)
+            print(
+                f"cache train={len(train_data)} test={len(test_data)} "
+                f"state_tokens={train_data.state_data.numel():,} "
+                f"query_tokens={train_data.query_data.numel():,}"
+            )
+
+            # Evaluation is sized to the training set, never larger: measuring on 5x the data
+            # the model sees is not more honest, it is just slower. The probe is what we
+            # monitor each epoch and is capped at the training size; the whole held-out split
+            # is scored exactly once, at the end.
+            probe_size = min(len(test_data), len(train_data))
+            if probe_size >= len(test_data):
+                probe_data = test_data
+            else:
+                # Spread the probe across configs instead of taking the first N, which would
+                # be the first few configs only.
+                per_config = max(1, probe_size // max(1, len(test_grouped)))
+                probe_examples = [
+                    example
+                    for case in test_grouped.values()
+                    for example in case[:per_config]
+                ][:probe_size]
+                probe_data = load_or_build(probe_cache_file, probe_examples, tokenizer, cfg)
+            print(f"eval probe={len(probe_data)} (test {len(test_data)}, train {len(train_data)})")
 
     _barrier()
+    if CACHE_ONLY:
+        if IS_MAIN:
+            print(f"cache ready in {directory}; exiting (SYSTEMONE_CACHE_ONLY=1)", flush=True)
+        return
     if not IS_MAIN:
         tokenizer = SentencePieceTokenizer(tokenizer_file)
         cfg = ModelConfig(
