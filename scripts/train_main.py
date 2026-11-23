@@ -8,7 +8,7 @@ if hasattr(sys.stdout, "reconfigure"):
 import torch
 import torch.distributed as dist
 
-from systemone import ModelConfig, build_model, checkpoint_path, load_or_build, save_checkpoint, set_seed
+from systemone import EncodedSet, ModelConfig, build_model, checkpoint_path, load_or_build, save_checkpoint, set_seed
 from systemone.data import filter_to_budget
 from systemone.bpe import DEFAULT_VOCAB_SIZE, SentencePieceTokenizer, train_tokenizer
 from systemone.calibrate import (
@@ -67,35 +67,40 @@ def _barrier() -> None:
 def main() -> None:
     set_seed(SEED)
 
-    started = time.perf_counter()
-    configs = train_configs(include_unfit=INCLUDE_UNFIT)
-    excluded = len(train_configs(include_unfit=True)) - len(configs)
-    if CONFIG_LIMIT:
-        configs = configs[:CONFIG_LIMIT]
+    directory = checkpoint_path(NAME)
+    tokenizer_file = directory / "tokenizer.model"
+    suffix = "_fit" if FIT_ONLY else ""
+    train_cache_file = directory / f"bekko_train_cache{suffix}.pt"
+    test_cache_file = directory / f"test_cache{suffix}.pt"
+
+    # Only rank 0 touches HuggingFace, trains the tokenizer, and builds caches.
+    # Worker ranks wait at the barrier and load the cached tensors in ~5 ms,
+    # avoiding duplicate HF downloads / 429 rate-limits on multi-GPU machines.
+    test_data = None
+    probe_data = None
     if IS_MAIN:
+        started = time.perf_counter()
+        configs = train_configs(include_unfit=INCLUDE_UNFIT)
+        excluded = len(train_configs(include_unfit=True)) - len(configs)
+        if CONFIG_LIMIT:
+            configs = configs[:CONFIG_LIMIT]
         print(f"loading train split ({len(configs)} configs, up to {MAX_CASES} cases/config)...", flush=True)
-    train_grouped = load_train(
-        configs=configs, max_candidates=MAX_CANDIDATES, max_cases=MAX_CASES, seed=SEED
-    )
-    train_set = [example for case in train_grouped.values() for example in case]
-    if IS_MAIN:
+        train_grouped = load_train(
+            configs=configs, max_candidates=MAX_CANDIDATES, max_cases=MAX_CASES, seed=SEED
+        )
+        train_set = [example for case in train_grouped.values() for example in case]
         print(f"train load_s={time.perf_counter() - started:.1f} configs={len(configs)} "
               f"excluded_unfit={excluded} cases={len(train_grouped)} examples={len(train_set)}")
 
-    test_grouped = load_test(seed=SEED)
-    test_set = [example for case in test_grouped.values() for example in case]
+        test_grouped = load_test(seed=SEED)
+        test_set = [example for case in test_grouped.values() for example in case]
 
-    if IS_MAIN:
         counts = {"noul": 0, "choice": 0, "score": 0}
         for example in train_set:
             counts[type(example.question).__name__.lower()] += 1
         print(f"train kinds={counts}")
         print(f"test examples={len(test_set)}")
 
-    directory = checkpoint_path(NAME)
-    tokenizer_file = directory / "tokenizer.model"
-    # Rank 0 builds the tokenizer (if missing) before other ranks load it.
-    if IS_MAIN:
         if tokenizer_file.exists():
             tokenizer = SentencePieceTokenizer(tokenizer_file)
             if tokenizer.vocab_size != DEFAULT_VOCAB_SIZE:
@@ -108,55 +113,33 @@ def main() -> None:
         else:
             tokenizer = train_tokenizer(collect_texts(train_grouped), directory / "tokenizer", vocab_size=DEFAULT_VOCAB_SIZE)
             print(f"tokenizer vocab={tokenizer.vocab_size}")
-    _barrier()
-    if not IS_MAIN:
-        tokenizer = SentencePieceTokenizer(tokenizer_file)
 
-    cfg = ModelConfig(
-        vocab_size=tokenizer.vocab_size,
-        d_model=128,
-        n_layers=4,
-        n_heads=4,
-        n_kv_heads=2,
-        ffn_hidden=352,
-        max_state_tokens=STATE_TOKENS,
-        max_query_tokens=QUERY_TOKENS,
-    )
-    model = build_model(cfg, SEED)
-    if IS_MAIN:
-        print(f"params={cfg.parameter_count():,} ({cfg.parameter_count() / 1e6:.2f}M) "
-              f"device={device} world_size={WORLD_SIZE}")
-        amp_label = str(autocast_dtype(device)).split(".")[-1] if BF16 else "fp32"
-        print(f"budget={STATE_TOKENS}/{QUERY_TOKENS} rows={MAX_ROWS} accum={GRAD_ACCUM} "
-              f"checkpoint={CHECKPOINT} amp={amp_label} compile={COMPILE}")
-
-    if FIT_ONLY:
-        kept_train = filter_to_budget(train_set, tokenizer, cfg)
-        kept_test = filter_to_budget(test_set, tokenizer, cfg)
-        if IS_MAIN:
+        cfg = ModelConfig(
+            vocab_size=tokenizer.vocab_size,
+            d_model=128,
+            n_layers=4,
+            n_heads=4,
+            n_kv_heads=2,
+            ffn_hidden=352,
+            max_state_tokens=STATE_TOKENS,
+            max_query_tokens=QUERY_TOKENS,
+        )
+        if FIT_ONLY:
+            kept_train = filter_to_budget(train_set, tokenizer, cfg)
+            kept_test = filter_to_budget(test_set, tokenizer, cfg)
             print(f"fit-only {len(kept_train)}/{len(train_set)} train examples "
                   f"({100*len(kept_train)/len(train_set):.1f}%), "
                   f"{len(kept_test)}/{len(test_set)} test ({100*len(kept_test)/len(test_set):.1f}%)")
-        train_set, test_set = kept_train, kept_test
+            train_set, test_set = kept_train, kept_test
 
-    suffix = "_fit" if FIT_ONLY else ""
-    # Rank 0 builds/writes caches first so worker ranks only read them.
-    if IS_MAIN:
-        train_data = load_or_build(directory / f"bekko_train_cache{suffix}.pt", train_set, tokenizer, cfg)
-        test_data = load_or_build(directory / f"test_cache{suffix}.pt", test_set, tokenizer, cfg)
-    _barrier()
-    if not IS_MAIN:
-        train_data = load_or_build(directory / f"bekko_train_cache{suffix}.pt", train_set, tokenizer, cfg)
-        test_data = load_or_build(directory / f"test_cache{suffix}.pt", test_set, tokenizer, cfg)
-    if IS_MAIN:
+        train_data = load_or_build(train_cache_file, train_set, tokenizer, cfg)
+        test_data = load_or_build(test_cache_file, test_set, tokenizer, cfg)
         print(
             f"cache train={len(train_data)} test={len(test_data)} "
             f"state_tokens={train_data.state_data.numel():,} "
             f"query_tokens={train_data.query_data.numel():,}"
         )
 
-    probe_data = None
-    if IS_MAIN:
         # Evaluation is sized to the training set, never larger: measuring on 5x the data
         # the model sees is not more honest, it is just slower. The probe is what we
         # monitor each epoch and is capped at the training size; the whole held-out split
@@ -175,6 +158,29 @@ def main() -> None:
             ][:probe_size]
             probe_data = load_or_build(directory / "probe_cache.pt", probe_examples, tokenizer, cfg)
         print(f"eval probe={len(probe_data)} (test {len(test_data)}, train {len(train_data)})")
+
+    _barrier()
+    if not IS_MAIN:
+        tokenizer = SentencePieceTokenizer(tokenizer_file)
+        cfg = ModelConfig(
+            vocab_size=tokenizer.vocab_size,
+            d_model=128,
+            n_layers=4,
+            n_heads=4,
+            n_kv_heads=2,
+            ffn_hidden=352,
+            max_state_tokens=STATE_TOKENS,
+            max_query_tokens=QUERY_TOKENS,
+        )
+        train_data = EncodedSet.load(train_cache_file)
+
+    model = build_model(cfg, SEED)
+    if IS_MAIN:
+        print(f"params={cfg.parameter_count():,} ({cfg.parameter_count() / 1e6:.2f}M) "
+              f"device={device} world_size={WORLD_SIZE}")
+        amp_label = str(autocast_dtype(device)).split(".")[-1] if BF16 else "fp32"
+        print(f"budget={STATE_TOKENS}/{QUERY_TOKENS} rows={MAX_ROWS} accum={GRAD_ACCUM} "
+              f"checkpoint={CHECKPOINT} amp={amp_label} compile={COMPILE}")
 
     state_file = directory / "training_state.pt"
     resume = torch.load(state_file, weights_only=False) if (RESUME and state_file.exists()) else None

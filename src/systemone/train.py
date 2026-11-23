@@ -18,6 +18,7 @@ import time
 from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 import torch
 import torch.distributed as dist
@@ -98,7 +99,7 @@ def init_distributed() -> tuple[torch.device, int, int]:
         device = torch.device("cpu")
         backend = "gloo"
     if not dist.is_initialized():
-        dist.init_process_group(backend=backend)
+        dist.init_process_group(backend=backend, timeout=timedelta(hours=1))
     return device, rank, world_size
 
 
@@ -331,26 +332,22 @@ def train(
                         f"elapsed={elapsed:.0f}s eta={eta:.0f}s",
                         flush=True,
                     )
-        if eval_dataset is not None and (epoch + 1) % eval_every == 0:
-            if rank == 0:
-                history.evals.append(
-                    (epoch + 1, evaluate(model, eval_dataset, max_rows, device, bf16))
-                )
-            if ddp:
-                dist.barrier()
+        if rank == 0 and eval_dataset is not None and (epoch + 1) % eval_every == 0:
+            history.evals.append(
+                (epoch + 1, evaluate(model, eval_dataset, max_rows, device, bf16))
+            )
             model.to(device).train()
         history.epoch = epoch + 1
-        if on_epoch_end is not None:
-            if rank == 0:
-                on_epoch_end(
-                    epoch + 1,
-                    history.state(
-                        model, optimiser, scheduler,
-                        fingerprint=getattr(dataset, "fingerprint", ""),
-                    ),
-                )
-            if ddp:
-                dist.barrier()
+        if rank == 0 and on_epoch_end is not None:
+            on_epoch_end(
+                epoch + 1,
+                history.state(
+                    model, optimiser, scheduler,
+                    fingerprint=getattr(dataset, "fingerprint", ""),
+                ),
+            )
+        if ddp:
+            dist.barrier()
 
     model.eval()
     return history
